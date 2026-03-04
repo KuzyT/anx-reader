@@ -11,15 +11,32 @@ if (typeof window !== 'undefined') {
   window.TranslationMode = TranslationMode
 }
 
-// Translation function that calls Flutter's translation service
+// Translation function that calls Flutter's translation service (single text, fallback)
 const translate = async (text) => {
   try {
-    // Call Flutter's translation handler
-      const result = await window.flutter_inappwebview.callHandler('translateText', text)
-      return result || `Translation failed: ${text}`
+    const result = await window.flutter_inappwebview.callHandler('translateText', text)
+    return result || `Translation failed: ${text}`
   } catch (error) {
     console.error('Translation failed:', error)
     return `Translation error: ${text}`
+  }
+}
+
+// Batch translation function — sends array of texts in one request
+const translateBatch = async (texts) => {
+  try {
+    const jsonStr = JSON.stringify(texts)
+    const resultJson = await window.flutter_inappwebview.callHandler('translateBatch', jsonStr)
+    const results = JSON.parse(resultJson)
+    if (Array.isArray(results) && results.length === texts.length) {
+      return results
+    }
+    // Fallback: if batch response is invalid, translate individually
+    console.warn('Batch translate returned invalid result, falling back to individual')
+    return await Promise.all(texts.map(t => translate(t)))
+  } catch (error) {
+    console.error('Batch translation failed, falling back to individual:', error)
+    return await Promise.all(texts.map(t => translate(t)))
   }
 }
 
@@ -28,6 +45,9 @@ export class Translator {
   observedElements = new Set()
   #translatedElements = new WeakMap()
   #observer = null
+  #pendingQueue = new Map() // element -> text
+  #batchTimer = null
+  #batchDelayMs = 200
   
   constructor() {
     this.#initializeObserver()
@@ -113,6 +133,13 @@ export class Translator {
   }
 
   clearTranslations() {
+    // Cancel any pending batch
+    if (this.#batchTimer) {
+      clearTimeout(this.#batchTimer)
+      this.#batchTimer = null
+    }
+    this.#pendingQueue.clear()
+    
     // Remove all translation elements and restore original content
     this.observedElements.forEach(element => {
       const translationElements = element.querySelectorAll('.translated-text')
@@ -179,18 +206,51 @@ export class Translator {
     const text = element.innerText?.trim()
     if (!text) return
     
+    // Add to batch queue instead of translating immediately
+    this.#pendingQueue.set(element, text)
+    this.#scheduleBatchFlush()
+  }
+
+  #scheduleBatchFlush() {
+    if (this.#batchTimer) {
+      clearTimeout(this.#batchTimer)
+    }
+    this.#batchTimer = setTimeout(() => {
+      this.#flushBatchQueue()
+    }, this.#batchDelayMs)
+  }
+
+  async #flushBatchQueue() {
+    this.#batchTimer = null
+    if (this.#pendingQueue.size === 0) return
+    
+    // Snapshot and clear the queue
+    const batch = new Map(this.#pendingQueue)
+    this.#pendingQueue.clear()
+    
+    const elements = Array.from(batch.keys())
+    const texts = Array.from(batch.values())
+    
     try {
-      const translatedText = await translate(text)
+      const translations = await translateBatch(texts)
       
-      // Mark as translated to prevent re-processing
-      this.#translatedElements.set(element, {
-        originalText: text,
-        translatedText: translatedText
-      })
-      
-      this.#applyTranslation(element, translatedText)
+      for (let i = 0; i < elements.length; i++) {
+        const element = elements[i]
+        const translatedText = translations[i]
+        
+        // Skip if already translated (race condition guard)
+        if (this.#translatedElements.has(element)) continue
+        
+        // Mark as translated
+        this.#translatedElements.set(element, {
+          originalText: texts[i],
+          translatedText: translatedText
+        })
+        
+        this.#applyTranslation(element, translatedText)
+      }
     } catch (error) {
-      console.warn('Translation failed:', error)
+      console.warn('Batch translation failed:', error)
     }
   }
 
@@ -307,21 +367,16 @@ export class Translator {
   }
 
   async #forceTranslateVisibleElements() {
-    // console.log('Force translating visible elements')
-    
-    const translationPromises = []
-    
-    // Find elements in viewport and translate them immediately
+    // Queue all visible untranslated elements for batch translation
     this.observedElements.forEach(element => {
       const rect = element.getBoundingClientRect()
       const isVisible = rect.top < window.innerHeight && rect.bottom > 0
       
       if (isVisible && !this.#translatedElements.has(element)) {
-        // console.log('Force translating visible element:', element)
-        const translationPromise = this.#translateElement(element).catch(error => {
-          console.warn('Force translation failed:', error)
-        })
-        translationPromises.push(translationPromise)
+        const text = element.innerText?.trim()
+        if (text) {
+          this.#pendingQueue.set(element, text)
+        }
       } else if (isVisible && this.#translatedElements.has(element)) {
         // Element already translated, just update display
         const translationWrapper = element.querySelector('.translated-text')
@@ -331,11 +386,9 @@ export class Translator {
       }
     })
     
-    // Wait for all visible translations to complete
-    if (translationPromises.length > 0) {
-      // console.log(`Waiting for ${translationPromises.length} translations to complete`)
-      await Promise.allSettled(translationPromises)
-      // console.log('All visible translations completed')
+    // Flush the batch immediately (no debounce for force translate)
+    if (this.#pendingQueue.size > 0) {
+      await this.#flushBatchQueue()
     }
   }
 

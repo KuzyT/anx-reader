@@ -4,6 +4,7 @@ enum AiPrompts {
   summaryTheBook,
   summaryThePreviousContent,
   translate,
+  translateBatch,
   mindmap,
 }
 
@@ -101,6 +102,13 @@ When acting as a translator (different languages):
 - Glossary: highlight 2-4 pivotal terms with short meaning notes in {{to_locale}}.
 - Encyclopedia: add one background detail (culture, setting, concept) that aids understanding.
       ''';
+
+      case AiPrompts.translateBatch:
+        return '''
+Translate the following JSON array of texts from {{from_locale}} to {{to_locale}}.
+Return ONLY a valid JSON array of translated strings in the exact same order. No extra text, no explanations, no markdown.
+Input: {{texts}}
+        ''';
 
       case AiPrompts.mindmap:
         return '''

@@ -124,6 +124,24 @@ PromptTemplatePayload generatePromptTranslate(
   );
 }
 
+PromptTemplatePayload generatePromptTranslateBatch(
+    String textsJson, String toLocale, String fromLocale) {
+  final prompt = Prefs().getAiPrompt(AiPrompts.translateBatch);
+  final normalized = _normalizePrompt(prompt);
+  final template = ChatPromptTemplate.fromPromptMessages([
+    HumanChatMessagePromptTemplate.fromTemplate(normalized),
+  ]);
+  return PromptTemplatePayload(
+    template: template,
+    variables: {
+      'texts': textsJson,
+      'to_locale': toLocale,
+      'from_locale': fromLocale,
+    },
+    identifier: AiPrompts.translateBatch,
+  );
+}
+
 String _normalizePrompt(String template) {
   return template.replaceAll('{{', '{').replaceAll('}}', '}');
 }

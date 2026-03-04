@@ -138,6 +138,17 @@ abstract class TranslateServiceProvider {
     throw Exception('Translation failed after all retry attempts');
   }
 
+  /// Translate a batch of texts. Default implementation calls translateTextOnly
+  /// for each text in parallel. AI provider overrides with single-request batch.
+  Future<List<String>> translateBatch(
+    List<String> texts,
+    LangListEnum from,
+    LangListEnum to,
+  ) async {
+    final futures = texts.map((text) => translateTextOnly(text, from, to));
+    return await Future.wait(futures);
+  }
+
   /// Returns the current configuration.
   Map<String, dynamic> getConfig() => {};
 

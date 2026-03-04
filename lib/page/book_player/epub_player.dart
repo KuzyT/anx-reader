@@ -845,14 +845,44 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
       callback: (args) async {
         try {
           String text = args[0];
+          debugPrint('🌐 [TRANSLATE REQUEST] "$text"');
           final service = Prefs().fullTextTranslateService;
           final from = Prefs().fullTextTranslateFrom;
           final to = Prefs().fullTextTranslateTo;
 
-          return await service.provider.translateTextOnly(text, from, to);
+          final result =
+              await service.provider.translateTextOnly(text, from, to);
+          debugPrint('✅ [TRANSLATE RESPONSE] "$text" → "$result"');
+          return result;
         } catch (e) {
+          debugPrint('❌ [TRANSLATE ERROR] "${args[0]}" → $e');
           AnxLog.severe('Translation error: $e');
           return 'Translation error: $e';
+        }
+      },
+    );
+    controller.addJavaScriptHandler(
+      handlerName: 'translateBatch',
+      callback: (args) async {
+        try {
+          final String textsJsonStr = args[0];
+          final List<dynamic> textsList = jsonDecode(textsJsonStr);
+          final texts = textsList.map((e) => e.toString()).toList();
+          debugPrint(
+              '🌐 [TRANSLATE BATCH] ${texts.length} texts: ${texts.map((t) => '"$t"').join(', ')}');
+          final service = Prefs().fullTextTranslateService;
+          final from = Prefs().fullTextTranslateFrom;
+          final to = Prefs().fullTextTranslateTo;
+
+          final results =
+              await service.provider.translateBatch(texts, from, to);
+          debugPrint(
+              '✅ [TRANSLATE BATCH RESPONSE] ${results.length} results: ${results.map((r) => '"$r"').join(', ')}');
+          return jsonEncode(results);
+        } catch (e) {
+          debugPrint('❌ [TRANSLATE BATCH ERROR] $e');
+          AnxLog.severe('Batch translation error: $e');
+          return jsonEncode(<String>[]);
         }
       },
     );

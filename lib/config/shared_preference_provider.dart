@@ -13,6 +13,7 @@ import 'package:anx_reader/enums/sort_field.dart';
 import 'package:anx_reader/enums/sort_order.dart';
 import 'package:anx_reader/enums/sync_protocol.dart';
 import 'package:anx_reader/enums/translation_mode.dart';
+import 'package:anx_reader/enums/translation_level.dart';
 import 'package:anx_reader/enums/writing_mode.dart';
 import 'package:anx_reader/enums/text_alignment.dart';
 import 'package:anx_reader/enums/ai_panel_position.dart';
@@ -635,6 +636,25 @@ class Prefs extends ChangeNotifier {
   LangListEnum get fullTextTranslateTo {
     return getLang(
         prefs.getString('fullTextTranslateTo') ?? getCurrentLanguageCode());
+  }
+
+  TranslationLevelEnum get translationLevel {
+    return TranslationLevelEnum.fromCode(
+        prefs.getString('translationLevel') ?? 'level0');
+  }
+
+  set translationLevel(TranslationLevelEnum level) {
+    prefs.setString('translationLevel', level.code);
+    notifyListeners();
+  }
+
+  int get aiBatchSize {
+    return prefs.getInt('aiBatchSize') ?? 30;
+  }
+
+  set aiBatchSize(int size) {
+    prefs.setInt('aiBatchSize', size);
+    notifyListeners();
   }
 
   // set convertChineseMode(ConvertChineseMode mode) {

@@ -3,7 +3,8 @@ export const TranslationMode = {
   OFF: 'off',
   TRANSLATION_ONLY: 'translation-only', 
   ORIGINAL_ONLY: 'original-only',
-  BILINGUAL: 'bilingual'
+  BILINGUAL: 'bilingual',
+  INTERLINEAR: 'interlinear'
 }
 
 // Make TranslationMode globally available for debugging
@@ -23,10 +24,10 @@ const translate = async (text) => {
 }
 
 // Batch translation function — sends array of texts in one request
-const translateBatch = async (texts) => {
+const translateBatch = async (texts, level = 'level0') => {
   try {
     const jsonStr = JSON.stringify(texts)
-    const resultJson = await window.flutter_inappwebview.callHandler('translateBatch', jsonStr)
+    const resultJson = await window.flutter_inappwebview.callHandler('translateBatch', jsonStr, level)
     const results = JSON.parse(resultJson)
     if (Array.isArray(results) && results.length === texts.length) {
       return results
@@ -42,12 +43,17 @@ const translateBatch = async (texts) => {
 
 export class Translator {
   #translationMode = TranslationMode.OFF
+  #translationLevel = 'level0'
+  #aiBatchSize = 30
   observedElements = new Set()
   #translatedElements = new WeakMap()
   #observer = null
   #pendingQueue = new Map() // element -> text
   #batchTimer = null
   #batchDelayMs = 200
+  #generationId = 0
+  #scrollTimer = null
+  #isScrolling = false
   
   constructor() {
     this.#initializeObserver()
@@ -67,7 +73,7 @@ export class Translator {
         })
       },
       {
-        rootMargin: '1280px',
+        rootMargin: '100%',
         threshold: 0
       }
     )
@@ -109,6 +115,67 @@ export class Translator {
 
   getTranslationMode() {
     return this.#translationMode
+  }
+
+  setTranslationLevel(level) {
+    const oldLevel = this.#translationLevel
+    this.#translationLevel = level
+    if (oldLevel !== level) {
+      // Soft reset: remove visual translations but keep observer alive
+      if (this.#batchTimer) {
+        clearTimeout(this.#batchTimer)
+        this.#batchTimer = null
+      }
+      this.#pendingQueue.clear()
+      
+      // Remove visual translation elements and restore original text
+      this.observedElements.forEach(element => {
+        const translationElements = element.querySelectorAll('.translated-text')
+        translationElements.forEach(trans => trans.remove())
+        this.#restoreOriginalText(element)
+      })
+      
+      // Reset translated tracking (but keep observedElements & observer intact)
+      this.#translatedElements = new WeakMap()
+      
+      // Re-translate with new level
+      this.#generationId++ // Invalidate any flying batches
+      if (this.#translationMode !== TranslationMode.OFF) {
+        this.#forceTranslateVisibleElements()
+      }
+    }
+  }
+
+  setAiBatchSize(size) {
+    if (typeof size === 'number' && size > 0) {
+      this.#aiBatchSize = size
+    }
+  }
+
+  onRelocated() {
+    if (this.#translationMode === TranslationMode.OFF) return
+    
+    // Invalidate any flying batches & clear current queue
+    this.#generationId++
+    
+    if (this.#batchTimer) {
+      clearTimeout(this.#batchTimer)
+      this.#batchTimer = null
+    }
+    this.#pendingQueue.clear()
+    
+    // Set scrolling flag and debounce
+    this.#isScrolling = true
+    if (this.#scrollTimer) clearTimeout(this.#scrollTimer)
+    this.#scrollTimer = setTimeout(() => {
+      this.#isScrolling = false
+      // Retrigger check for observed visible elements
+      this.#forceTranslateVisibleElements()
+    }, 2000)
+  }
+
+  getTranslationLevel() {
+    return this.#translationLevel
   }
 
   observeDocument(doc) {
@@ -212,6 +279,8 @@ export class Translator {
   }
 
   #scheduleBatchFlush() {
+    if (this.#isScrolling) return
+    
     if (this.#batchTimer) {
       clearTimeout(this.#batchTimer)
     }
@@ -227,65 +296,249 @@ export class Translator {
     // Snapshot and clear the queue
     const batch = new Map(this.#pendingQueue)
     this.#pendingQueue.clear()
+    const currentGen = this.#generationId
     
     const elements = Array.from(batch.keys())
     const texts = Array.from(batch.values())
     
     try {
-      const translations = await translateBatch(texts)
+      // For both word-level and sentence-level we want to translate as much as possible 
+      // in one go. We try aiBatchSize elements at a time.
+      const isWordLevel = this.#translationMode === TranslationMode.INTERLINEAR && this.#translationLevel !== 'level0'
+      const maxBatchSize = this.#aiBatchSize
       
-      for (let i = 0; i < elements.length; i++) {
-        const element = elements[i]
-        const translatedText = translations[i]
+      // Process chunks sequentially to avoid overwhelming the API
+      // Apply translations IMMEDIATELY after each chunk finishes
+      for (let start = 0; start < texts.length; start += maxBatchSize) {
+        if (this.#generationId !== currentGen) return // aborted by scroll/level change
+        const chunkLength = Math.min(maxBatchSize, texts.length - start)
+        const chunkTexts = texts.slice(start, start + chunkLength)
+        const chunkElements = elements.slice(start, start + chunkLength)
         
-        // Skip if already translated (race condition guard)
-        if (this.#translatedElements.has(element)) continue
-        
-        // Mark as translated
-        this.#translatedElements.set(element, {
-          originalText: texts[i],
-          translatedText: translatedText
-        })
-        
-        this.#applyTranslation(element, translatedText)
+        try {
+          const chunkTranslations = await translateBatch(chunkTexts, this.#translationLevel)
+          
+          for (let i = 0; i < chunkElements.length; i++) {
+            const element = chunkElements[i]
+            const originalText = chunkTexts[i]
+            const translatedText = chunkTranslations[i]
+            
+            // Skip empty/failed translations or if race condition happened
+            if (!translatedText || translatedText === originalText || this.#translatedElements.has(element)) {
+              continue
+            }
+            
+            // Mark as translated
+            this.#translatedElements.set(element, {
+              originalText: originalText,
+              translatedText: translatedText
+            })
+            
+            this.#applyTranslation(element, translatedText)
+          }
+        } catch (error) {
+          console.error('Translation chunk failed:', error)
+        }
       }
     } catch (error) {
       console.warn('Batch translation failed:', error)
+      
+      // Detailed error in translation marks
+      for (const element of elements) {
+        if (!this.#translatedElements.has(element)) {
+          this.#translatedElements.set(element, {
+            originalText: this.#pendingQueue.get(element),
+            translatedText: '[Error: Translation failed]'
+          })
+          this.#applyTranslation(element, '[Error: Translation failed]')
+        }
+      }
     }
   }
 
-  #applyTranslation(element, translatedText) {
+  #applyTranslation(element, translatedData) {
     // Remove existing translation if any
     const existingTranslation = element.querySelector('.translated-text')
     if (existingTranslation) {
       existingTranslation.remove()
     }
     
-    // Create translation wrapper
+    // Interlinear mode: try ruby/marker rendering
+    if (this.#translationMode === TranslationMode.INTERLINEAR) {
+      // Try to parse as word pairs JSON
+      let wordPairs = null
+      try {
+        const parsed = JSON.parse(translatedData)
+        if (Array.isArray(parsed) && parsed.length > 0 && Array.isArray(parsed[0])) {
+          wordPairs = parsed
+        }
+      } catch (_) {}
+      
+      if (wordPairs) {
+        this.#applyRubyTranslation(element, wordPairs)
+        return
+      }
+      
+      // Check for marker format: text with [word|translation] annotations
+      if (translatedData.includes('[') && translatedData.includes('|')) {
+        const markerPairs = this.#parseMarkerFormat(translatedData)
+        if (markerPairs && markerPairs.length > 0) {
+          this.#applyRubyTranslation(element, markerPairs)
+          return
+        }
+      }
+      
+      // Fallback for interlinear: full-sentence ruby block above original
+      this.#applyRubyBlockTranslation(element, translatedData)
+      return
+    }
+    
+    // All other modes: plain block translation
+    this.#applyBlockTranslation(element, translatedData)
+  }
+
+  // Parse "[word|translation]" marker format into word pairs
+  #parseMarkerFormat(text) {
+    const pairs = []
+    // Split text by marker pattern, keeping both marked and unmarked parts
+    const regex = /\[([^\]|]+)\|([^\]]*)\]/g
+    let lastIndex = 0
+    let match
+    
+    while ((match = regex.exec(text)) !== null) {
+      // Add unmarked text before this marker as individual words
+      if (match.index > lastIndex) {
+        const before = text.substring(lastIndex, match.index)
+        before.split(/(\s+)/).forEach(part => {
+          if (part.trim()) {
+            pairs.push([part, ''])
+          } else if (part) {
+            pairs.push([part, ''])  // preserve whitespace
+          }
+        })
+      }
+      // Add the marked word with its translation
+      pairs.push([match[1], match[2]])
+      lastIndex = match.index + match[0].length
+    }
+    
+    // Add remaining text after last marker
+    if (lastIndex < text.length) {
+      const remaining = text.substring(lastIndex)
+      remaining.split(/(\s+)/).forEach(part => {
+        if (part.trim()) {
+          pairs.push([part, ''])
+        } else if (part) {
+          pairs.push([part, ''])
+        }
+      })
+    }
+    
+    return pairs.length > 0 ? pairs : null
+  }
+
+  #applyRubyTranslation(element, wordPairs) {
+    // Create a wrapper that replaces original content with ruby-annotated words
     const wrapper = document.createElement('span')
     wrapper.className = 'translated-text'
     wrapper.setAttribute('data-translation-mark', '1')
-    wrapper.style.display = 'block'
-    // wrapper.style.fontSize = '0.9em'
-    // wrapper.style.color = '#666'
-    // wrapper.style.fontStyle = 'italic'
-    wrapper.style.marginTop = '0.2em'
-    wrapper.textContent = translatedText
+    wrapper.style.display = 'inline'
     
-    // Apply based on current mode
+    for (let i = 0; i < wordPairs.length; i++) {
+      const [original, translation] = wordPairs[i]
+      
+      if (translation && translation.trim()) {
+        // Word with translation — use ruby element
+        const ruby = document.createElement('ruby')
+        ruby.textContent = original
+        
+        const rt = document.createElement('rt')
+        rt.textContent = translation
+        rt.style.fontSize = '0.65em'
+        rt.style.color = '#999'
+        rt.style.fontWeight = 'normal'
+        rt.style.fontStyle = 'normal'
+        
+        ruby.appendChild(rt)
+        wrapper.appendChild(ruby)
+      } else {
+        // Word without translation — just the word
+        const span = document.createElement('span')
+        span.textContent = original
+        wrapper.appendChild(span)
+      }
+      
+      // Add space between words (except after last)
+      if (i < wordPairs.length - 1) {
+        wrapper.appendChild(document.createTextNode(' '))
+      }
+    }
+    
+    // Apply display mode
     this.#updateElementDisplay(element, wrapper)
     
-    element.appendChild(wrapper)
+    // Insert before original content
+    element.insertBefore(wrapper, element.firstChild)
+  }
+
+  // Plain block translation for bilingual/translation-only modes
+  // Renders translated text as a separate block above/below original
+  #applyBlockTranslation(element, translatedText) {
+    const wrapper = document.createElement('div')
+    wrapper.className = 'translated-text'
+    wrapper.setAttribute('data-translation-mark', '1')
+    wrapper.textContent = translatedText
+    wrapper.style.fontSize = '0.85em'
+    wrapper.style.color = 'var(--original-color, inherit)'
+    wrapper.style.opacity = '0.85'
+    wrapper.style.marginBottom = '0.25em'
+    wrapper.style.fontStyle = 'italic'
+    
+    this.#updateElementDisplay(element, wrapper)
+    element.insertBefore(wrapper, element.firstChild)
+  }
+
+  // Interlinear block translation: full sentence rendered as ruby above original
+  #applyRubyBlockTranslation(element, translatedText) {
+    const wrapper = document.createElement('span')
+    wrapper.className = 'translated-text'
+    wrapper.setAttribute('data-translation-mark', '1')
+    wrapper.style.display = 'inline'
+    
+    const ruby = document.createElement('ruby')
+    
+    // Clone original content into ruby base
+    Array.from(element.childNodes).forEach(node => {
+      if (!node.classList || !node.classList.contains('translated-text')) {
+        ruby.appendChild(node.cloneNode(true))
+      }
+    })
+    
+    // Translation annotation above
+    const rt = document.createElement('rt')
+    rt.textContent = translatedText
+    rt.style.fontSize = '0.7em'
+    rt.style.color = '#777'
+    rt.style.fontWeight = 'normal'
+    rt.style.fontStyle = 'italic'
+    
+    ruby.appendChild(rt)
+    wrapper.appendChild(ruby)
+    
+    this.#updateElementDisplay(element, wrapper)
+    element.insertBefore(wrapper, element.firstChild)
   }
 
   #updateElementDisplay(element, translationWrapper) {
     const data = this.#translatedElements.get(element)
     if (!data) return
     
+    const isRuby = translationWrapper.querySelector('ruby') !== null
+    
     switch (this.#translationMode) {
       case TranslationMode.TRANSLATION_ONLY:
         this.#hideOriginalText(element)
-        translationWrapper.style.display = 'block'
+        translationWrapper.style.display = isRuby ? 'inline' : 'block'
         break
         
       case TranslationMode.ORIGINAL_ONLY:
@@ -294,8 +547,15 @@ export class Translator {
         break
         
       case TranslationMode.BILINGUAL:
+        // Simple bilingual: show original + block translation above
         this.#restoreOriginalText(element)
         translationWrapper.style.display = 'block'
+        break
+
+      case TranslationMode.INTERLINEAR:
+        // Ruby mode: wrapper contains original + annotations, hide raw original text
+        this.#hideOriginalText(element)
+        translationWrapper.style.display = 'inline'
         break
         
       case TranslationMode.OFF:

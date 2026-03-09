@@ -5,6 +5,7 @@ enum AiPrompts {
   summaryThePreviousContent,
   translate,
   translateBatch,
+  translateBatchWordLevel,
   mindmap,
 }
 
@@ -105,8 +106,29 @@ When acting as a translator (different languages):
 
       case AiPrompts.translateBatch:
         return '''
-Translate the following JSON array of texts from {{from_locale}} to {{to_locale}}.
+Translate the following JSON array of texts strictly from {{from_locale}} to {{to_locale}}.
+Do not use any other language for the translation.
 Return ONLY a valid JSON array of translated strings in the exact same order. No extra text, no explanations, no markdown.
+Input: {{texts}}
+        ''';
+
+      case AiPrompts.translateBatchWordLevel:
+        return '''
+You are a language learning assistant. Reader's proficiency: {{level}}.
+
+Task: Return the ORIGINAL text but annotate words ABOVE the reader's level by wrapping them as [word|translation].
+Leave all other words unchanged. Do not translate the whole sentence.
+Return a JSON array of annotated strings (one per input text).
+
+Example (level B1, translating to Spanish):
+Input: ["The astronomer observed the celestial phenomenon"]
+Output: ["The [astronomer|astrónomo] observed the [celestial|celestial] [phenomenon|fenómeno]"]
+
+IMPORTANT:
+1. Do NOT translate the entire sentence. Only wrap individual difficult words in [word|translation] markers.
+2. CRITICAL: The translations inside the brackets MUST be strictly in {{to_locale}}.
+3. Return ONLY a valid JSON array.
+
 Input: {{texts}}
         ''';
 

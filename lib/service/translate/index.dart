@@ -143,8 +143,9 @@ abstract class TranslateServiceProvider {
   Future<List<String>> translateBatch(
     List<String> texts,
     LangListEnum from,
-    LangListEnum to,
-  ) async {
+    LangListEnum to, {
+    String level = 'level0',
+  }) async {
     final futures = texts.map((text) => translateTextOnly(text, from, to));
     return await Future.wait(futures);
   }

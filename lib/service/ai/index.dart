@@ -24,6 +24,7 @@ Stream<String> aiGenerateStream(
   Map<String, String>? config,
   bool regenerate = false,
   bool useAgent = false,
+  double? temperature,
   WidgetRef? ref,
 }) {
   if (useAgent) {
@@ -37,6 +38,7 @@ Stream<String> aiGenerateStream(
       overrideConfig: config,
       regenerate: regenerate,
       useAgent: useAgent,
+      temperature: temperature,
       registry: registry);
 }
 
@@ -50,6 +52,7 @@ Stream<String> _generateStream({
   Map<String, String>? overrideConfig,
   required bool regenerate,
   required bool useAgent,
+  double? temperature,
   required LangchainAiRegistry registry,
 }) async* {
   AnxLog.info('aiGenerateStream called identifier: $identifier');
@@ -76,6 +79,10 @@ Stream<String> _generateStream({
             apiKey: apiKey,
             url: provider.url,
           );
+
+          if (temperature != null) {
+            config = config.copyWith(temperature: temperature);
+          }
 
           AnxLog.info(
               'aiGenerateStream (new): ${provider.id}, model: ${config.model}, baseUrl: ${config.baseUrl}');
@@ -123,6 +130,10 @@ Stream<String> _generateStream({
     final override =
         LangchainAiConfig.fromPrefs(selectedIdentifier, overrideConfig);
     config = mergeConfigs(config, override);
+  }
+
+  if (temperature != null) {
+    config = config.copyWith(temperature: temperature);
   }
 
   AnxLog.info(

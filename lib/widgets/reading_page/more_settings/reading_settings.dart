@@ -1,7 +1,9 @@
 import 'package:anx_reader/config/shared_preference_provider.dart';
+import 'package:anx_reader/dao/translation_cache.dart';
 import 'package:anx_reader/enums/convert_chinese_mode.dart';
 import 'package:anx_reader/enums/reading_info.dart';
 import 'package:anx_reader/enums/translation_mode.dart';
+import 'package:anx_reader/enums/translation_level.dart';
 import 'package:anx_reader/enums/writing_mode.dart';
 import 'package:anx_reader/enums/code_highlight_theme.dart';
 import 'package:anx_reader/l10n/generated/L10n.dart';
@@ -305,6 +307,11 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
                         label: L10n.of(context).bilingual,
                         value: TranslationModeEnum.bilingual,
                         icon: const Icon(Icons.compare),
+                      ),
+                      SegmentButtonItem(
+                        label: 'Надстр.',
+                        value: TranslationModeEnum.interlinear,
+                        icon: const Icon(Icons.format_line_spacing),
                       ),
                     ],
                     selected: {
@@ -699,6 +706,101 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
       );
     }
 
+    Widget aiBatchSizeWidget() {
+      return StatefulBuilder(
+        builder: (context, setState) => Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('AI Batch Size',
+                    style: Theme.of(context).textTheme.titleMedium),
+                Text(Prefs().aiBatchSize.toString(),
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.primary,
+                        )),
+              ],
+            ),
+            if (!isReading)
+              Text('Only available while reading',
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(color: Colors.grey)),
+            Slider(
+              value: Prefs().aiBatchSize.toDouble(),
+              min: 5,
+              max: 50,
+              divisions: 9, // Steps: 5, 10, 15, ..., 50
+              onChanged: isReading
+                  ? (value) {
+                      setState(() {
+                        Prefs().aiBatchSize = value.toInt();
+                        epubPlayerKey.currentState
+                            ?.setAiBatchSize(value.toInt());
+                      });
+                    }
+                  : null,
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget translationLevel() {
+      return StatefulBuilder(
+        builder: (context, setState) => Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 8),
+            Text('Translation Level',
+                style: Theme.of(context).textTheme.titleMedium),
+            if (!isReading)
+              Text('Only available while reading',
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(color: Colors.grey)),
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButton<TranslationLevelEnum>(
+                    isExpanded: true,
+                    value: Prefs().translationLevel,
+                    underline: Container(),
+                    dropdownColor:
+                        Theme.of(context).colorScheme.surfaceContainer,
+                    borderRadius: BorderRadius.circular(8),
+                    items: TranslationLevelEnum.values.map((level) {
+                      return DropdownMenuItem<TranslationLevelEnum>(
+                        value: level,
+                        child: Text(level.displayName),
+                      );
+                    }).toList(),
+                    onChanged: isReading
+                        ? (value) {
+                            if (value != null) {
+                              setState(() {
+                                Prefs().translationLevel = value;
+                                epubPlayerKey.currentState
+                                    ?.setTranslationLevel(value);
+                              });
+                            }
+                          }
+                        : null,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
     return Container(
       padding: const EdgeInsets.all(18.0),
       child: Column(
@@ -707,6 +809,37 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
           const Divider(height: 20),
           writingMode(),
           translationMode(),
+          if (epubPlayerKey.currentState != null &&
+              Prefs().getBookTranslationMode(
+                      epubPlayerKey.currentState!.widget.book.id) ==
+                  TranslationModeEnum.interlinear)
+            translationLevel(),
+          aiBatchSizeWidget(),
+          if (epubPlayerKey.currentState != null) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () async {
+                      final bookId = epubPlayerKey.currentState!.widget.book.id;
+                      final count =
+                          await translationCacheDao.clearForBook(bookId);
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                          content:
+                              Text('Кеш переводов очищен ($count записей)'),
+                          duration: const Duration(seconds: 2),
+                        ));
+                      }
+                    },
+                    icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+                    label: const Text('Очистить кеш переводов'),
+                  ),
+                ),
+              ],
+            ),
+          ],
           columnCount(),
           columnThreshold(),
           convertChinese(),

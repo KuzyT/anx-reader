@@ -193,6 +193,9 @@ export class View extends HTMLElement {
       this.#lastCfi = cfi
       this.#emit('relocate', this.lastLocation)
     }
+    
+    // Notify translator of scroll/relocate for debouncing
+    this.#translator?.onRelocated?.()
   }
 
   #onLoad({ doc, index }) {
@@ -595,6 +598,18 @@ export class View extends HTMLElement {
   
   getTranslationMode() {
     return this.#translator.getTranslationMode()
+  }
+
+  setTranslationLevel(level) {
+    this.#translator.setTranslationLevel(level)
+  }
+
+  setAiBatchSize(size) {
+    this.#translator.setAiBatchSize(size)
+  }
+
+  getTranslationLevel() {
+    return this.#translator.getTranslationLevel()
   }
   
   clearTranslations() {

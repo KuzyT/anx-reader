@@ -1,3 +1,4 @@
+import 'package:anx_reader/config/shared_preference_provider.dart';
 import 'package:anx_reader/main.dart';
 import 'package:anx_reader/widgets/common/container/filled_container.dart';
 import 'package:flutter/material.dart';
@@ -40,10 +41,13 @@ class AnxToast {
     // close previous toast
     fToast.removeQueuedCustomToasts();
 
+    final isEink = Prefs().eInkMode;
+
     fToast.showToast(
       child: toast,
       gravity: ToastGravity.BOTTOM,
       toastDuration: Duration(milliseconds: duration),
+      fadeDuration: isEink ? Duration.zero : const Duration(milliseconds: 350),
     );
   }
 }

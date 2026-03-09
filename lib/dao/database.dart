@@ -13,7 +13,7 @@ import 'package:path/path.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 // Current app database version
-const int currentDbVersion = 7;
+const int currentDbVersion = 8;
 
 const createBookSQL = '''
 CREATE TABLE tb_books (
@@ -94,6 +94,18 @@ CREATE TABLE tb_groups (
   create_time TEXT,
   update_time TEXT,
   FOREIGN KEY (parent_id) REFERENCES tb_groups(id)
+)
+''';
+
+const createTranslationCacheSQL = '''
+CREATE TABLE tb_translation_cache (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  book_id INTEGER NOT NULL,
+  level TEXT NOT NULL,
+  original_text TEXT NOT NULL,
+  translated_text TEXT NOT NULL,
+  create_time TEXT,
+  UNIQUE(book_id, level, original_text)
 )
 ''';
 
@@ -425,6 +437,11 @@ class DBHelper {
             VALUES (?, '...', 0, datetime('now'), datetime('now'))
           ''', [groupId]);
         }
+        continue case7;
+      case7:
+      case 7:
+        // Add translation cache table
+        await db.execute(createTranslationCacheSQL);
     }
 
     if (oldVersion != 0 && Prefs().webdavStatus) {

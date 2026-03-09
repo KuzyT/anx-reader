@@ -5,9 +5,11 @@ import 'dart:ui';
 import 'package:anx_reader/config/shared_preference_provider.dart';
 import 'package:anx_reader/dao/book.dart';
 import 'package:anx_reader/dao/book_note.dart';
+import 'package:anx_reader/dao/translation_cache.dart';
 import 'package:anx_reader/enums/page_turn_mode.dart';
 import 'package:anx_reader/enums/reading_info.dart';
 import 'package:anx_reader/enums/translation_mode.dart';
+import 'package:anx_reader/enums/translation_level.dart';
 import 'package:anx_reader/enums/writing_mode.dart';
 import 'package:anx_reader/l10n/generated/L10n.dart';
 import 'package:anx_reader/main.dart';
@@ -109,6 +111,9 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
   double _accumulatedScrollDelta = 0;
   static const double _scrollThreshold = 50.0;
 
+  // Translation queue lock
+  static Future<void>? _activeTranslationRequest;
+
   // to know anytime if we are on top of navigation stack
   bool get _isTopOfNavigationStack =>
       ModalRoute.of(context)?.isCurrent ?? false;
@@ -137,6 +142,22 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
     webViewController.evaluateJavascript(source: '''
       if (typeof reader.view !== 'undefined' && reader.view.setTranslationMode) {
         reader.view.setTranslationMode('${mode.code}');
+      }
+      ''');
+  }
+
+  void setTranslationLevel(TranslationLevelEnum level) {
+    webViewController.evaluateJavascript(source: '''
+      if (typeof reader.view !== 'undefined' && reader.view.setTranslationLevel) {
+        reader.view.setTranslationLevel('${level.code}');
+      }
+      ''');
+  }
+
+  void setAiBatchSize(int size) {
+    webViewController.evaluateJavascript(source: '''
+      if (typeof reader.view !== 'undefined' && reader.view.setAiBatchSize) {
+        reader.view.setAiBatchSize($size);
       }
       ''');
   }
@@ -866,19 +887,66 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
       callback: (args) async {
         try {
           final String textsJsonStr = args[0];
+          final String level = args.length > 1 ? args[1] : 'level0';
           final List<dynamic> textsList = jsonDecode(textsJsonStr);
           final texts = textsList.map((e) => e.toString()).toList();
-          debugPrint(
-              '🌐 [TRANSLATE BATCH] ${texts.length} texts: ${texts.map((t) => '"$t"').join(', ')}');
           final service = Prefs().fullTextTranslateService;
+          debugPrint(
+              '🌐 [TRANSLATE BATCH] service=${service.name}, level=$level, ${texts.length} texts');
           final from = Prefs().fullTextTranslateFrom;
           final to = Prefs().fullTextTranslateTo;
+          final bookId = widget.book.id;
 
-          final results =
-              await service.provider.translateBatch(texts, from, to);
-          debugPrint(
-              '✅ [TRANSLATE BATCH RESPONSE] ${results.length} results: ${results.map((r) => '"$r"').join(', ')}');
-          return jsonEncode(results);
+          // Step 1: Wait in queue to avoid cache race conditions
+          while (_activeTranslationRequest != null) {
+            await _activeTranslationRequest;
+          }
+          final completer = Completer<void>();
+          _activeTranslationRequest = completer.future;
+
+          try {
+            // Step 2: Check translation cache AFTER acquiring lock
+            final cached =
+                await translationCacheDao.getTranslations(bookId, level, texts);
+            final uncachedTexts =
+                texts.where((t) => !cached.containsKey(t)).toList();
+            debugPrint(
+                '📋 [CACHE HIT] ${cached.length}/${texts.length} found in cache, ${uncachedTexts.length} need AI');
+
+            // Step 3: Translate uncached texts via AI
+            Map<String, String> newTranslations = {};
+            if (uncachedTexts.isNotEmpty) {
+              final aiResults = await service.provider
+                  .translateBatch(uncachedTexts, from, to, level: level);
+              debugPrint(
+                  '✅ [AI RESPONSE] ${aiResults.length} results for ${uncachedTexts.length} texts');
+
+              // Map results back to original texts
+              for (int i = 0;
+                  i < uncachedTexts.length && i < aiResults.length;
+                  i++) {
+                newTranslations[uncachedTexts[i]] = aiResults[i];
+              }
+
+              // Step 4: Save new translations to cache
+              if (newTranslations.isNotEmpty) {
+                await translationCacheDao.insertTranslations(
+                    bookId, level, newTranslations);
+              }
+            }
+
+            // Step 5: Build ordered result (preserve original text order)
+            final results = texts.map((text) {
+              return cached[text] ?? newTranslations[text] ?? text;
+            }).toList();
+
+            debugPrint(
+                '✅ [TRANSLATE BATCH RESPONSE] ${results.length} results: ${results.map((r) => '"$r"').join(', ')}');
+            return jsonEncode(results);
+          } finally {
+            _activeTranslationRequest = null;
+            completer.complete();
+          }
         } catch (e) {
           debugPrint('❌ [TRANSLATE BATCH ERROR] $e');
           AnxLog.severe('Batch translation error: $e');
@@ -898,6 +966,8 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
 
     // Initialize translation mode based on book-specific settings
     Future.delayed(const Duration(milliseconds: 300), () {
+      setTranslationLevel(Prefs().translationLevel);
+      setAiBatchSize(Prefs().aiBatchSize);
       setTranslationMode(Prefs().getBookTranslationMode(widget.book.id));
     });
   }

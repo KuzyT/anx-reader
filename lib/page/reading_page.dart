@@ -18,6 +18,7 @@ import 'package:anx_reader/page/book_player/epub_player.dart';
 import 'package:anx_reader/providers/sync.dart';
 import 'package:anx_reader/service/ai/index.dart';
 import 'package:anx_reader/service/ai/prompt_generate.dart';
+import 'package:anx_reader/service/translate/ai.dart';
 import 'package:anx_reader/utils/env_var.dart';
 import 'package:anx_reader/utils/toast/common.dart';
 import 'package:anx_reader/utils/ui/status_bar.dart';
@@ -30,6 +31,7 @@ import 'package:anx_reader/widgets/reading_page/tts_widget.dart';
 import 'package:anx_reader/widgets/reading_page/style_widget.dart';
 import 'package:anx_reader/widgets/reading_page/toc_widget.dart';
 import 'package:anx_reader/widgets/common/axis_flex.dart';
+import 'package:anx_reader/widgets/reading_page/ai_status_overlay.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -133,6 +135,11 @@ class ReadingPageState extends ConsumerState<ReadingPage>
 
   @override
   void dispose() {
+    // Cancel any ongoing AI batch translation
+    try {
+      AiTranslateProvider.cancelTranslation();
+    } catch (_) {}
+
     Sync().syncData(SyncDirection.upload, ref, trigger: SyncTrigger.auto);
     _readTimeWatch.stop();
     _awakeTimer?.cancel();
@@ -972,6 +979,7 @@ class ReadingPageState extends ConsumerState<ReadingPage>
                     ],
                   ),
                   controller,
+                  const AiStatusOverlay(),
                 ],
               ),
             ),

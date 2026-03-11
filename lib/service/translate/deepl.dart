@@ -7,6 +7,7 @@ import 'package:anx_reader/service/translate/index.dart';
 import 'package:anx_reader/utils/log/common.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 const _deeplApiUrl = 'https://api-free.deepl.com/v2/translate';
 
@@ -43,6 +44,7 @@ class DeepLTranslateProvider extends TranslateServiceProvider {
     LangListEnum from,
     LangListEnum to, {
     String? contextText,
+    WidgetRef? ref,
   }) {
     return convertStreamToWidget(
       translateStream(text, from, to, contextText: contextText),
@@ -55,6 +57,7 @@ class DeepLTranslateProvider extends TranslateServiceProvider {
     LangListEnum from,
     LangListEnum to, {
     String? contextText,
+    WidgetRef? ref,
   }) async* {
     try {
       final config = getConfig();

@@ -7,10 +7,12 @@ import 'package:anx_reader/service/ai/prompt_generate.dart';
 import 'package:anx_reader/service/ai/index.dart';
 import 'package:anx_reader/service/config/config_item.dart';
 import 'package:anx_reader/service/translate/index.dart';
+ import 'package:anx_reader/service/ai_translation_status_service.dart';
 import 'package:anx_reader/utils/log/common.dart';
 import 'package:anx_reader/utils/toast/common.dart';
 import 'package:anx_reader/widgets/ai/ai_stream.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:async';
 
 class AiTranslateProvider extends TranslateServiceProvider {
@@ -27,12 +29,21 @@ class AiTranslateProvider extends TranslateServiceProvider {
   @override
   String mapLanguageCode(LangListEnum lang) => lang.nativeName;
 
+  static void cancelTranslation() {
+    if (_activeBatchRequest != null) {
+      cancelActiveAiRequest();
+      _activeBatchRequest = null;
+      AiTranslationStatusService().setIdle();
+    }
+  }
+
   @override
   Widget translate(
     String text,
     LangListEnum from,
     LangListEnum to, {
     String? contextText,
+    WidgetRef? ref,
   }) {
     final prompt = generatePromptTranslate(
       text,
@@ -53,6 +64,7 @@ class AiTranslateProvider extends TranslateServiceProvider {
     LangListEnum from,
     LangListEnum to, {
     String? contextText,
+    WidgetRef? ref,
   }) async* {
     try {
       final payload = generatePromptTranslate(
@@ -65,7 +77,7 @@ class AiTranslateProvider extends TranslateServiceProvider {
       final messages = payload.buildMessages();
 
       await for (final result
-          in aiGenerateStream(messages, regenerate: false)) {
+          in aiGenerateStream(messages, regenerate: false, ref: ref)) {
         yield result;
       }
     } catch (e) {
@@ -82,6 +94,8 @@ class AiTranslateProvider extends TranslateServiceProvider {
     LangListEnum from,
     LangListEnum to, {
     String level = 'level0',
+    String? pageInfo,
+    WidgetRef? ref,
   }) async {
     dynamic messages;
 
@@ -93,11 +107,16 @@ class AiTranslateProvider extends TranslateServiceProvider {
     final completer = Completer<void>();
     _activeBatchRequest = completer.future;
 
+    final statusService = AiTranslationStatusService();
+
     try {
       if (texts.isEmpty) return [];
+      statusService.startTranslating(texts.length);
+
       if (texts.length == 1 && level == 'level0') {
         // Single text — use standard translate
-        final result = await this.translateTextOnly(texts[0], from, to);
+        final result =
+            await this.translateTextOnly(texts[0], from, to, ref: ref);
         return [result];
       }
 
@@ -134,39 +153,70 @@ class AiTranslateProvider extends TranslateServiceProvider {
       // Collect the full AI response with timing
       final stopwatch = Stopwatch()..start();
       String fullResponse = '';
-      await for (final chunk
-          in aiGenerateStream(messages, regenerate: false, temperature: 0.0)) {
+      await for (final chunk in aiGenerateStream(messages,
+          regenerate: false, temperature: 0.0, ref: ref)) {
         fullResponse = chunk;
       }
       stopwatch.stop();
       debugPrint(
           '📩 [AI RESPONSE] (${stopwatch.elapsed.inMilliseconds}ms, ${fullResponse.length} chars):\n$fullResponse');
 
-      // Parse JSON array from response
-      final parsed = _parseJsonArrayFromResponse(fullResponse, texts.length);
-      if (parsed != null) {
-        return parsed;
+      // Check for textual errors from AI like "Error: Rate limit reached. Try again later."
+      if (fullResponse.contains('Cancelled by user') ||
+          fullResponse.contains('cancelled by user')) {
+        throw Exception('Cancelled by user or system');
       }
 
-      // Check for textual errors from AI like "Error: Rate limit reached. Try again later."
       if (fullResponse.contains('Rate limit') ||
           fullResponse.contains('429') ||
-          fullResponse.contains('Quota exceeded')) {
+          fullResponse.contains('Quota exceeded') ||
+          fullResponse.contains('Error:')) {
         throw Exception('RateLimitException(429): $fullResponse');
       }
 
-      // Fallback: if parsing fails, translate individually
+      // Parse JSON array from response
+      final parsed = _parseJsonArrayFromResponse(fullResponse, texts.length);
+      if (parsed != null) {
+        String logMessage =
+            'Translated ${texts.length} items (${stopwatch.elapsed.inMilliseconds}ms)';
+        if (pageInfo != null && pageInfo.isNotEmpty) {
+          logMessage += ' [Pages: $pageInfo]';
+        }
+
+        statusService.addLog(
+          message: logMessage,
+          requestPayload: promptText,
+          responsePayload: fullResponse,
+        );
+
+        statusService.addRequestStat(
+          itemsCount: texts.length,
+          durationMs: stopwatch.elapsed.inMilliseconds,
+        );
+        return parsed;
+      }
+
+      // Fallback: if parsing fails, throw Exception to log as error in catch block
       AnxLog.warning(
           'Batch translation JSON parse failed. Response: $fullResponse');
-      return []; // Return empty instead of falling back to individual to save quota
+      throw Exception('Failed to parse JSON response');
     } catch (e) {
       final errorStr = e.toString();
+      if (errorStr.contains('Cancelled by user or system') ||
+          errorStr.contains('cancelled by user')) {
+        AnxLog.info('Batch translation cancelled by user or system.');
+        AiTranslationStatusService().setIdle();
+        return [];
+      }
+
       AnxLog.severe('Batch translation error: $errorStr');
+      final statusService = AiTranslationStatusService();
 
       // Check for Rate Limit (429) and parse the retry duration if available
       if (errorStr.contains('429') ||
           errorStr.contains('Rate limit') ||
           errorStr.contains('Quota exceeded')) {
+        statusService.setWaitingRateLimit();
         final retryMatch = RegExp(r'retry in ([\d\.]+)s').firstMatch(errorStr);
         double delaySeconds = 60.0; // Default backoff
         if (retryMatch != null && retryMatch.group(1) != null) {
@@ -179,6 +229,18 @@ class AiTranslateProvider extends TranslateServiceProvider {
         debugPrint(
             '⏳ [RATE LIMIT] Waiting ${delaySeconds.toStringAsFixed(1)}s...');
 
+        statusService.addLog(
+          message:
+              'Rate limit hit. Waiting ${delaySeconds.toStringAsFixed(1)}s...',
+          isError: true,
+          responsePayload: errorStr,
+        );
+
+        statusService.addRequestStat(
+          itemsCount: texts.length,
+          isError: true,
+        );
+
         AnxToast.show(
             'Rate limit exceeded. Retrying in ${delaySeconds.toInt()}s',
             duration: 3000);
@@ -186,6 +248,8 @@ class AiTranslateProvider extends TranslateServiceProvider {
         await Future.delayed(Duration(
             milliseconds:
                 (delaySeconds * 1000).toInt() + 500)); // Add 500ms buffer
+
+        statusService.startTranslating(texts.length);
 
         try {
           debugPrint('🔄 [RETRYING] Retrying batch translation after delay...');
@@ -203,22 +267,65 @@ class AiTranslateProvider extends TranslateServiceProvider {
 
           String retryResponse = '';
           await for (final chunk
-              in aiGenerateStream(retryMessages, regenerate: false)) {
+              in aiGenerateStream(retryMessages, regenerate: false, ref: ref)) {
             retryResponse = chunk;
           }
+          // Check for textual errors from AI like "Error: Rate limit reached. Try again later."
+          if (retryResponse.contains('Rate limit') ||
+              retryResponse.contains('429') ||
+              retryResponse.contains('Quota exceeded') ||
+              retryResponse.contains('Error:')) {
+            throw Exception('RateLimitException(429): $retryResponse');
+          }
+
           final parsedRetry =
               _parseJsonArrayFromResponse(retryResponse, texts.length);
+
           if (parsedRetry != null) {
+            statusService.addLog(
+              message: 'Retry: Translated ${texts.length} items',
+              requestPayload:
+                  retryMessages.map((m) => m.contentAsString).join('\n'),
+              responsePayload: retryResponse,
+            );
+
+            statusService.addRequestStat(
+              itemsCount: texts.length,
+            );
             return parsedRetry;
           }
+
+          throw Exception('Retry JSON parse failed: $retryResponse');
         } catch (retryErr) {
           AnxLog.severe('Batch translation retry also failed: $retryErr');
+          statusService.setError('Retry failed');
+          statusService.addLog(
+            message: 'Retry failed',
+            isError: true,
+            responsePayload: retryErr.toString(),
+          );
+          statusService.addRequestStat(
+            itemsCount: texts.length,
+            isError: true,
+          );
         }
+      } else {
+        statusService.setError('Translation error');
+        statusService.addLog(
+          message: 'Translation error',
+          isError: true,
+          responsePayload: errorStr,
+        );
+        statusService.addRequestStat(
+          itemsCount: texts.length,
+          isError: true,
+        );
       }
 
       // If we fall through to here
       return [];
     } finally {
+      AiTranslationStatusService().setIdle();
       // Release the lock for the next request in queue
       _activeBatchRequest = null;
       completer.complete();

@@ -3,10 +3,11 @@ import 'package:anx_reader/enums/lang_list.dart';
 import 'package:anx_reader/service/translate/index.dart';
 import 'package:anx_reader/widgets/common/axis_flex.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
 import 'dart:async';
 
-class TranslationMenu extends StatefulWidget {
+class TranslationMenu extends ConsumerStatefulWidget {
   const TranslationMenu({
     super.key,
     required this.content,
@@ -20,10 +21,10 @@ class TranslationMenu extends StatefulWidget {
   final String? contextText;
 
   @override
-  State<TranslationMenu> createState() => _TranslationMenuState();
+  ConsumerState<TranslationMenu> createState() => _TranslationMenuState();
 }
 
-class _TranslationMenuState extends State<TranslationMenu> {
+class _TranslationMenuState extends ConsumerState<TranslationMenu> {
   Widget? _translationWidget;
   Timer? _debounceTimer;
   bool _translationInitialized = false;
@@ -52,6 +53,7 @@ class _TranslationMenuState extends State<TranslationMenu> {
           _translationWidget = translateText(
             widget.content,
             contextText: effectiveContextText,
+            ref: ref,
           );
           _translationInitialized = true;
         });

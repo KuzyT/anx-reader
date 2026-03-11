@@ -750,6 +750,33 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
       );
     }
 
+    Widget showAiTranslationStatusWidget() {
+      return StatefulBuilder(
+        builder: (context, setState) => Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('AI Translation Status & Logs',
+                    style: Theme.of(context).textTheme.titleMedium),
+                Switch(
+                  value: Prefs().showAiTranslationStatus,
+                  onChanged: (value) {
+                    setState(() {
+                      Prefs().showAiTranslationStatus = value;
+                    });
+                  },
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
     Widget translationLevel() {
       return StatefulBuilder(
         builder: (context, setState) => Column(
@@ -814,6 +841,7 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
                       epubPlayerKey.currentState!.widget.book.id) ==
                   TranslationModeEnum.interlinear)
             translationLevel(),
+          showAiTranslationStatusWidget(),
           aiBatchSizeWidget(),
           if (epubPlayerKey.currentState != null) ...[
             const SizedBox(height: 8),

@@ -106,6 +106,11 @@ Stream<String> _generateStream({
         }
       }
     } catch (e) {
+      if (e is StateError && e.message.contains('disposed')) {
+        AnxLog.warning('aiGenerateStream aborted due to disposed ref: $e');
+        yield 'Error: Exception: Cancelled by user or system';
+        return;
+      }
       AnxLog.warning(
           'Failed to use new provider system, falling back to legacy: $e');
     }

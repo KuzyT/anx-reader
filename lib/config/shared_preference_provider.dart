@@ -1025,6 +1025,15 @@ class Prefs extends ChangeNotifier {
     return prefs.getBool('showMenuOnHover') ?? true;
   }
 
+  set showAiTranslationStatus(bool status) {
+    prefs.setBool('showAiTranslationStatus', status);
+    notifyListeners();
+  }
+
+  bool get showAiTranslationStatus {
+    return prefs.getBool('showAiTranslationStatus') ?? false;
+  }
+
   set pageTurnMode(String mode) {
     prefs.setString('pageTurnMode', mode);
     notifyListeners();

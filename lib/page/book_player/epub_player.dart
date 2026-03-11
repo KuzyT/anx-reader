@@ -675,6 +675,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
       callback: (args) async {
         final payload = args.isNotEmpty ? args.first : null;
         await _handleExternalLink(payload);
+        if (!mounted) return Completer<dynamic>().future;
       },
     );
     controller.addJavaScriptHandler(
@@ -853,10 +854,12 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
                   createTime: DateTime.now(),
                 ),
               );
+          if (!mounted) return Completer<dynamic>().future;
           bookmarkCfi = cfi;
           bookmarkExists = true;
           addBookmark(bookmark);
         }
+        if (!mounted) return Completer<dynamic>().future;
         widget.updateParent();
         setState(() {});
       },
@@ -865,6 +868,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
       handlerName: 'translateText',
       callback: (args) async {
         try {
+          if (!mounted) return Completer<dynamic>().future;
           String text = args[0];
           debugPrint('🌐 [TRANSLATE REQUEST] "$text"');
           final service = Prefs().fullTextTranslateService;
@@ -873,11 +877,13 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
 
           final result =
               await service.provider.translateTextOnly(text, from, to);
+          if (!mounted) return Completer<dynamic>().future;
           debugPrint('✅ [TRANSLATE RESPONSE] "$text" → "$result"');
           return result;
         } catch (e) {
           debugPrint('❌ [TRANSLATE ERROR] "${args[0]}" → $e');
           AnxLog.severe('Translation error: $e');
+          if (!mounted) return Completer<dynamic>().future;
           return 'Translation error: $e';
         }
       },
@@ -888,6 +894,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
         try {
           final String textsJsonStr = args[0];
           final String level = args.length > 1 ? args[1] : 'level0';
+          final String pageInfo = args.length > 2 ? args[2] : '';
           final List<dynamic> textsList = jsonDecode(textsJsonStr);
           final texts = textsList.map((e) => e.toString()).toList();
           final service = Prefs().fullTextTranslateService;
@@ -901,13 +908,19 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
           while (_activeTranslationRequest != null) {
             await _activeTranslationRequest;
           }
+          if (!mounted) return Completer<dynamic>().future;
+
           final completer = Completer<void>();
           _activeTranslationRequest = completer.future;
 
           try {
+            if (!mounted) return Completer<dynamic>().future;
+
             // Step 2: Check translation cache AFTER acquiring lock
             final cached =
                 await translationCacheDao.getTranslations(bookId, level, texts);
+            if (!mounted) return Completer<dynamic>().future;
+
             final uncachedTexts =
                 texts.where((t) => !cached.containsKey(t)).toList();
             debugPrint(
@@ -916,8 +929,11 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
             // Step 3: Translate uncached texts via AI
             Map<String, String> newTranslations = {};
             if (uncachedTexts.isNotEmpty) {
-              final aiResults = await service.provider
-                  .translateBatch(uncachedTexts, from, to, level: level);
+              if (!mounted) return Completer<dynamic>().future;
+              final aiResults = await service.provider.translateBatch(
+                  uncachedTexts, from, to,
+                  level: level, pageInfo: pageInfo, ref: ref);
+              if (!mounted) return Completer<dynamic>().future;
               debugPrint(
                   '✅ [AI RESPONSE] ${aiResults.length} results for ${uncachedTexts.length} texts');
 
@@ -932,6 +948,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
               if (newTranslations.isNotEmpty) {
                 await translationCacheDao.insertTranslations(
                     bookId, level, newTranslations);
+                if (!mounted) return Completer<dynamic>().future;
               }
             }
 
@@ -950,6 +967,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
         } catch (e) {
           debugPrint('❌ [TRANSLATE BATCH ERROR] $e');
           AnxLog.severe('Batch translation error: $e');
+          if (!mounted) return Completer<dynamic>().future;
           return jsonEncode(<String>[]);
         }
       },

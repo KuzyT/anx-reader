@@ -14,6 +14,7 @@ import 'package:anx_reader/utils/env_var.dart';
 import 'package:anx_reader/utils/log/common.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 enum TranslateService {
   bingWeb,
@@ -86,6 +87,7 @@ abstract class TranslateServiceProvider {
     LangListEnum from,
     LangListEnum to, {
     String? contextText,
+    WidgetRef? ref,
   });
 
   /// Returns a stream of translation results.
@@ -94,6 +96,7 @@ abstract class TranslateServiceProvider {
     LangListEnum from,
     LangListEnum to, {
     String? contextText,
+    WidgetRef? ref,
   });
 
   /// Translate text only (no widget), with retry logic.
@@ -102,6 +105,7 @@ abstract class TranslateServiceProvider {
     LangListEnum from,
     LangListEnum to, {
     String? contextText,
+    WidgetRef? ref,
   }) async {
     const int maxRetries = 2;
 
@@ -113,6 +117,7 @@ abstract class TranslateServiceProvider {
           from,
           to,
           contextText: contextText,
+          ref: ref,
         )) {
           lastResult = result;
           if (result != '...' && result.trim().isNotEmpty) {
@@ -145,8 +150,11 @@ abstract class TranslateServiceProvider {
     LangListEnum from,
     LangListEnum to, {
     String level = 'level0',
+    String? pageInfo,
+    WidgetRef? ref,
   }) async {
-    final futures = texts.map((text) => translateTextOnly(text, from, to));
+    final futures =
+        texts.map((text) => translateTextOnly(text, from, to, ref: ref));
     return await Future.wait(futures);
   }
 
@@ -199,7 +207,7 @@ abstract class TranslateServiceProvider {
 // ============================================================================
 
 Widget translateText(String text,
-    {TranslateService? service, String? contextText}) {
+    {TranslateService? service, String? contextText, WidgetRef? ref}) {
   service ??= Prefs().translateService;
   final from = Prefs().translateFrom;
   final to = Prefs().translateTo;
@@ -209,6 +217,7 @@ Widget translateText(String text,
     from,
     to,
     contextText: contextText,
+    ref: ref,
   );
 }
 
@@ -227,7 +236,7 @@ void saveTranslateServiceConfig(
 }
 
 Future<String> translateTextOnly(String text,
-    {TranslateService? service, String? contextText}) async {
+    {TranslateService? service, String? contextText, WidgetRef? ref}) async {
   service ??= Prefs().translateService;
   final from = Prefs().translateFrom;
   final to = Prefs().translateTo;
@@ -237,5 +246,6 @@ Future<String> translateTextOnly(String text,
     from,
     to,
     contextText: contextText,
+    ref: ref,
   );
 }

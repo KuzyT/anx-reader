@@ -7,10 +7,16 @@ import 'package:langchain/langchain.dart';
 class CancelableLangchainRunner {
   static const String thinkTag = '<think/>';
   StreamSubscription<ChatResult>? _subscription;
+  StreamController<String>? _controller;
 
   void cancel() {
     _subscription?.cancel();
     _subscription = null;
+    if (_controller != null && !_controller!.isClosed) {
+      _controller!.addError(Exception('Cancelled by user or system'));
+      _controller!.close();
+    }
+    _controller = null;
   }
 
   Stream<String> stream({
@@ -25,6 +31,7 @@ class CancelableLangchainRunner {
     late StreamController<String> controller;
     controller = StreamController<String>(
       onListen: () {
+        _controller = controller;
         final source = model.stream(prompt);
         _subscription = source.listen(
           (event) {
@@ -71,6 +78,7 @@ class CancelableLangchainRunner {
               await controller.close();
             }
             _subscription = null;
+            if (_controller == controller) _controller = null;
           },
           cancelOnError: false,
         );
@@ -82,6 +90,7 @@ class CancelableLangchainRunner {
         if (!controller.isClosed) {
           await controller.close();
         }
+        if (_controller == controller) _controller = null;
       },
     );
 
@@ -96,7 +105,8 @@ class CancelableLangchainRunner {
     ChatMessage? systemMessage,
     int maxIterations = 120,
   }) {
-    final controller = StreamController<String>();
+    final StreamController<String> controller = StreamController<String>();
+    _controller = controller;
 
     Future<void>(() async {
       final parser = const ToolsAgentOutputParser();
@@ -304,6 +314,7 @@ class CancelableLangchainRunner {
         if (!controller.isClosed) {
           await controller.close();
         }
+        if (_controller == controller) _controller = null;
       }
     });
 

@@ -1,6 +1,8 @@
 import 'package:anx_reader/config/shared_preference_provider.dart';
 import 'package:anx_reader/models/ai_provider.dart';
+import 'package:anx_reader/page/reading_page.dart';
 import 'package:anx_reader/service/ai/ai_services.dart';
+import 'package:anx_reader/service/translate/ai.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:uuid/uuid.dart';
 
@@ -108,6 +110,15 @@ class AiProviders extends _$AiProviders {
   /// Set the selected provider
   void setSelectedProvider(String providerId) {
     Prefs().selectedAiService = providerId;
+    try {
+      AiTranslateProvider.cancelTranslation();
+      final readingPage = readingPageKey.currentState;
+      if (readingPage != null && readingPage.mounted) {
+        epubPlayerKey.currentState?.webViewController.evaluateJavascript(
+            source:
+                "if (window.reader && window.reader.cancelAndClear) { window.reader.cancelAndClear(); }");
+      }
+    } catch (_) {}
     ref.notifyListeners();
   }
 

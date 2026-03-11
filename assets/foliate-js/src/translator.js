@@ -24,10 +24,10 @@ const translate = async (text) => {
 }
 
 // Batch translation function — sends array of texts in one request
-const translateBatch = async (texts, level = 'level0') => {
+const translateBatch = async (texts, level = 'level0', pageInfo = '') => {
   try {
     const jsonStr = JSON.stringify(texts)
-    const resultJson = await window.flutter_inappwebview.callHandler('translateBatch', jsonStr, level)
+    const resultJson = await window.flutter_inappwebview.callHandler('translateBatch', jsonStr, level, pageInfo)
     const results = JSON.parse(resultJson)
     if (Array.isArray(results) && results.length === texts.length) {
       return results
@@ -73,7 +73,7 @@ export class Translator {
         })
       },
       {
-        rootMargin: '100%',
+        rootMargin: '50%',
         threshold: 0
       }
     )
@@ -172,6 +172,15 @@ export class Translator {
       // Retrigger check for observed visible elements
       this.#forceTranslateVisibleElements()
     }, 2000)
+  }
+
+  cancelAndClear() {
+    this.#pendingQueue.clear()
+    this.#generationId++ 
+    if (this.#batchTimer) {
+      clearTimeout(this.#batchTimer)
+      this.#batchTimer = null
+    }
   }
 
   getTranslationLevel() {
@@ -314,9 +323,22 @@ export class Translator {
         const chunkLength = Math.min(maxBatchSize, texts.length - start)
         const chunkTexts = texts.slice(start, start + chunkLength)
         const chunkElements = elements.slice(start, start + chunkLength)
+
+        let pageTypes = new Set();
+        for (let i = 0; i < chunkElements.length; i++) {
+          const rect = chunkElements[i].getBoundingClientRect();
+          if (rect.bottom < 0 || rect.right < 0) {
+            pageTypes.add("Prev");
+          } else if (rect.top >= window.innerHeight || rect.left >= window.innerWidth) {
+            pageTypes.add("Next");
+          } else {
+            pageTypes.add("Current");
+          }
+        }
+        const pageInfo = Array.from(pageTypes).join(", ");
         
         try {
-          const chunkTranslations = await translateBatch(chunkTexts, this.#translationLevel)
+          const chunkTranslations = await translateBatch(chunkTexts, this.#translationLevel, pageInfo)
           
           for (let i = 0; i < chunkElements.length; i++) {
             const element = chunkElements[i]
@@ -437,7 +459,48 @@ export class Translator {
     return pairs.length > 0 ? pairs : null
   }
 
+  #injectWordWiseStyles(doc) {
+    if (doc.getElementById('anx-wordwise-style')) return
+    const style = doc.createElement('style')
+    style.id = 'anx-wordwise-style'
+    style.textContent = `
+      /* 
+       * Draw the Word Wise brace using SVG:
+       * M0,4 - left endpoint (down)
+       * Q0,0 4,0 - curve up to straight line
+       * L46,0 - straight line to middle
+       * Q49,0 50,-4 - curve up to the middle peak (up)
+       * Q51,0 54,0 - curve down to straight line
+       * L96,0 - straight line to right
+       * Q100,0 100,4 - curve down to right endpoint (down)
+       */
+      ruby.anx-wordwise {
+        position: relative;
+        /* create some space above the text for the brace */
+        padding-top: 6px; 
+      }
+      ruby.anx-wordwise::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        right: 0;
+        /* push it slightly down so it sits right above the base word and below the translation */
+        top: 3px;
+        height: 5px;
+        /* Use SVG for the brace */
+        background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='5' viewBox='0 -4 100 8' preserveAspectRatio='none'%3E%3Cpath d='M0,4 Q0,0 4,0 L46,0 Q49,0 50,-4 Q51,0 54,0 L96,0 Q100,0 100,4' fill='none' stroke='%23a0a0a0' stroke-width='1' vector-effect='non-scaling-stroke'/%3E%3C/svg%3E");
+        background-position: center top;
+        background-repeat: no-repeat;
+        background-size: 100% 100%;
+        pointer-events: none;
+      }
+
+    `
+    doc.head.appendChild(style)
+  }
+
   #applyRubyTranslation(element, wordPairs) {
+    this.#injectWordWiseStyles(element.ownerDocument)
     // Create a wrapper that replaces original content with ruby-annotated words
     const wrapper = document.createElement('span')
     wrapper.className = 'translated-text'
@@ -450,15 +513,19 @@ export class Translator {
       if (translation && translation.trim()) {
         // Word with translation — use ruby element
         const ruby = document.createElement('ruby')
+        ruby.className = 'anx-wordwise'
         ruby.textContent = original
         
         const rt = document.createElement('rt')
         rt.textContent = translation
-        rt.style.fontSize = '0.65em'
-        rt.style.color = '#999'
+        rt.style.fontSize = '0.75em'
+        /* Add a bit of space so it doesn't touch the brace */
+        rt.style.paddingBottom = '3px'
+        rt.style.color = 'inherit'
+        rt.style.opacity = '0.85'
         rt.style.fontWeight = 'normal'
         rt.style.fontStyle = 'normal'
-        
+
         ruby.appendChild(rt)
         wrapper.appendChild(ruby)
       } else {
@@ -517,8 +584,9 @@ export class Translator {
     // Translation annotation above
     const rt = document.createElement('rt')
     rt.textContent = translatedText
-    rt.style.fontSize = '0.7em'
-    rt.style.color = '#777'
+    rt.style.fontSize = '0.8em'
+    rt.style.color = 'inherit'
+    rt.style.opacity = '0.85'
     rt.style.fontWeight = 'normal'
     rt.style.fontStyle = 'italic'
     

@@ -611,6 +611,10 @@ export class View extends HTMLElement {
   getTranslationLevel() {
     return this.#translator.getTranslationLevel()
   }
+
+  cancelAndClear() {
+    this.#translator?.cancelAndClear?.()
+  }
   
   clearTranslations() {
     this.#translator.clearTranslations()

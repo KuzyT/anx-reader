@@ -282,7 +282,25 @@ export class Translator {
     const text = element.innerText?.trim()
     if (!text) return
     
-    // Add to batch queue instead of translating immediately
+    // Check local cache instantly first before adding to AI processing queue
+    try {
+      const cacheResultJson = await window.flutter_inappwebview.callHandler('checkTranslationCache', JSON.stringify([text]), this.#translationLevel)
+      const cacheResult = JSON.parse(cacheResultJson)
+
+      if (cacheResult && cacheResult[text]) {
+        // Cache Hit: Render instantly without batch delays
+        this.#translatedElements.set(element, {
+          originalText: text,
+          translatedText: cacheResult[text]
+        })
+        this.#applyTranslation(element, cacheResult[text])
+        return
+      }
+    } catch (e) {
+      console.warn('Cache check failed:', e)
+    }
+
+    // Cache Miss: Add to batch queue for AI translation that waits for scroll stop
     this.#pendingQueue.set(element, text)
     this.#scheduleBatchFlush()
   }

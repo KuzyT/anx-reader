@@ -889,6 +889,29 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
       },
     );
     controller.addJavaScriptHandler(
+      handlerName: 'checkTranslationCache',
+      callback: (args) async {
+        try {
+          if (!mounted) return Completer<dynamic>().future;
+          final String textsJsonStr = args[0];
+          final String level = args.length > 1 ? args[1] : 'level0';
+          final List<dynamic> textsList = jsonDecode(textsJsonStr);
+          final texts = textsList.map((e) => e.toString()).toList();
+          final bookId = widget.book.id;
+
+          final cached = await translationCacheDao.getTranslations(
+              bookId, level, texts);
+          if (!mounted) return Completer<dynamic>().future;
+          return jsonEncode(cached);
+        } catch (e) {
+          debugPrint('❌ [CACHE CHECK ERROR] $e');
+          AnxLog.severe('Cache check error: $e');
+          if (!mounted) return Completer<dynamic>().future;
+          return "{}";
+        }
+      },
+    );
+    controller.addJavaScriptHandler(
       handlerName: 'translateBatch',
       callback: (args) async {
         try {

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:anx_reader/config/shared_preference_provider.dart';
 import 'package:anx_reader/dao/translation_cache.dart';
 import 'package:anx_reader/enums/convert_chinese_mode.dart';
@@ -20,9 +21,130 @@ class ReadingMoreSettings extends StatefulWidget {
   State<ReadingMoreSettings> createState() => _ReadingMoreSettingsState();
 }
 
+enum ClearCacheScope { page, chapter, book }
+
 class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
   final isReading =
       epubPlayerKey.currentState != null && epubPlayerKey.currentState!.mounted;
+
+  Future<void> _showClearCacheDialog() async {
+    final bookId = epubPlayerKey.currentState!.widget.book.id;
+    final currentLevelEnum = Prefs().translationLevel;
+    final currentLevelName = currentLevelEnum.name;
+
+    ClearCacheScope scope = ClearCacheScope.page;
+    bool currentLevelOnly = true;
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Очистить кеш переводов'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  RadioListTile<ClearCacheScope>(
+                    title: const Text('Текущая страница'),
+                    value: ClearCacheScope.page,
+                    groupValue: scope,
+                    onChanged: (v) => setDialogState(() => scope = v!),
+                  ),
+                  RadioListTile<ClearCacheScope>(
+                    title: const Text('Текущая глава'),
+                    value: ClearCacheScope.chapter,
+                    groupValue: scope,
+                    onChanged: (v) => setDialogState(() => scope = v!),
+                  ),
+                  RadioListTile<ClearCacheScope>(
+                    title: const Text('Вся книга'),
+                    value: ClearCacheScope.book,
+                    groupValue: scope,
+                    onChanged: (v) => setDialogState(() => scope = v!),
+                  ),
+                  const Divider(),
+                  SwitchListTile(
+                    title: Text('Только уровень ${currentLevelEnum.displayName}'),
+                    value: currentLevelOnly,
+                    onChanged: (v) =>
+                        setDialogState(() => currentLevelOnly = v),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Отмена'),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    Navigator.pop(context);
+                    await _confirmClearCache(bookId, scope,
+                        currentLevelOnly ? currentLevelName : null);
+                  },
+                  child: const Text('Очистить',
+                      style: TextStyle(color: Colors.red)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _confirmClearCache(
+      int bookId, ClearCacheScope scope, String? level) async {
+    List<String>? originals;
+
+    if (scope == ClearCacheScope.page || scope == ClearCacheScope.chapter) {
+      final jsMethod = scope == ClearCacheScope.page
+          ? 'if (window.view && window.view.translator) window.view.translator.getVisibleOriginalTexts()'
+          : 'if (window.view && window.view.translator) window.view.translator.getChapterOriginalTexts()';
+
+      final result = await epubPlayerKey.currentState?.webViewController
+          .evaluateJavascript(source: jsMethod);
+
+      if (result != null) {
+        try {
+          final decoded = result is String ? jsonDecode(result) : result;
+          if (decoded is List) {
+            originals = decoded.map((e) => e.toString()).toList();
+          }
+        } catch (e) {
+          debugPrint('Error parsing JS result for clear cache: $result \n $e');
+        }
+      }
+
+      // CRITICAL: If we failed to get originals for a restrictive scope,
+      // ABORT to avoid clearing the whole book.
+      if (originals == null || originals.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Ошибка: не удалось определить текст для удаления'),
+            backgroundColor: Colors.red,
+          ));
+        }
+        return;
+      }
+    }
+
+    final count = await translationCacheDao.clearSpecific(bookId,
+        level: level, originals: originals);
+
+    // Refresh UI: trigger re-translation observation in WebView
+    await epubPlayerKey.currentState?.webViewController?.evaluateJavascript(
+        source:
+            'if (window.view && window.view.translator) window.view.translator.retranslateAll()');
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Кеш очищен ($count записей)'),
+        duration: const Duration(seconds: 2),
+      ));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -849,18 +971,7 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () async {
-                      final bookId = epubPlayerKey.currentState!.widget.book.id;
-                      final count =
-                          await translationCacheDao.clearForBook(bookId);
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                          content:
-                              Text('Кеш переводов очищен ($count записей)'),
-                          duration: const Duration(seconds: 2),
-                        ));
-                      }
-                    },
+                    onPressed: () => _showClearCacheDialog(),
                     icon: const Icon(Icons.delete_sweep_outlined, size: 18),
                     label: const Text('Очистить кеш переводов'),
                   ),

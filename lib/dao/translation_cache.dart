@@ -72,6 +72,36 @@ class TranslationCacheDao {
     return count;
   }
 
+   /// Clear specific translations based on book, level and optional texts.
+  Future<int> clearSpecific(int bookId,
+      {String? level, List<String>? originals}) async {
+    final db = await DBHelper().database;
+    String where = 'book_id = ?';
+    List<dynamic> whereArgs = [bookId];
+
+    if (level != null) {
+      where += ' AND level = ?';
+      whereArgs.add(level);
+    }
+
+    if (originals != null && originals.isNotEmpty) {
+      // SQLite IN clause with placeholders
+      // Note: If too many originals, might need batching, but usually it's one page/chapter.
+      final placeholders = List.filled(originals.length, '?').join(', ');
+      where += ' AND original_text IN ($placeholders)';
+      whereArgs.addAll(originals);
+    }
+
+    final count = await db.delete(
+      'tb_translation_cache',
+      where: where,
+      whereArgs: whereArgs,
+    );
+    debugPrint(
+        '🗑️ [CACHE CLEAR SPECIFIC] Cleared $count entries (bookId=$bookId, level=$level, textsCount=${originals?.length ?? 'ALL'})');
+    return count;
+  }
+
   /// Get total cache size for a book (for UI display).
   Future<int> countForBook(int bookId) async {
     final db = await DBHelper().database;

@@ -234,6 +234,57 @@ export class Translator {
     this.#initializeObserver()
   }
 
+  retranslateAll() {
+    this.#translatedElements = new WeakMap()
+    // Trigger re-translation by re-initializing observation on everything
+    this.#initializeObserver()
+    this.observedElements.forEach(el => {
+      // Small trick: remove then let observer find it again, 
+      // or just call #translateElement directly if it was public.
+      // But #initializeObserver already cleans and re-adds.
+    })
+  }
+
+  getVisibleOriginalTexts() {
+    const texts = new Set()
+    const viewportWidth = window.innerWidth
+    const viewportHeight = window.innerHeight
+
+    this.observedElements.forEach(element => {
+      const rect = element.getBoundingClientRect()
+      // Check if element is at least partially visible in viewport
+      const isVisible = (
+        rect.top < viewportHeight &&
+        rect.bottom > 0 &&
+        rect.left < viewportWidth &&
+        rect.right > 0
+      )
+
+      if (isVisible) {
+        const text = this.#getElementOriginalText(element)
+        if (text) texts.add(text)
+      }
+    })
+    return Array.from(texts)
+  }
+
+  getChapterOriginalTexts() {
+    const texts = new Set()
+    this.observedElements.forEach(element => {
+      const text = this.#getElementOriginalText(element)
+      if (text) texts.add(text)
+    })
+    return Array.from(texts)
+  }
+
+  #getElementOriginalText(element) {
+    const data = this.#translatedElements.get(element)
+    if (data && data.originalText) {
+      return data.originalText
+    }
+    return element.innerText?.trim()
+  }
+
   #walkTextNodes(root, rejectTags = ['pre', 'code', 'math', 'style', 'script']) {
     const elements = []
     
@@ -441,7 +492,11 @@ export class Translator {
   #parseMarkerFormat(text) {
     const pairs = []
     // Split text by marker pattern, keeping both marked and unmarked parts
-    const regex = /\[([^\]|]+)\|([^\]]*)\]/g
+    // Refined regex handles:
+    // 1. [word|trans] - valid
+    // 2. [word|trans} - wrong bracket
+    // 3. [word|trans - missing bracket (stops at space/end)
+    const regex = /\[([^\[\]|]+)\|((?:[^\[\]\|\}]*?(?=[\]\}]))|[^\[\]\|\} \r\n]*?)([\]\}])?/g
     let lastIndex = 0
     let match
     
@@ -458,6 +513,7 @@ export class Translator {
         })
       }
       // Add the marked word with its translation
+      // match[1] = original, match[2] = translation
       pairs.push([match[1], match[2]])
       lastIndex = match.index + match[0].length
     }

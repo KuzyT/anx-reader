@@ -76,8 +76,11 @@ export class View extends HTMLElement {
   history = new History()
   #lastCfi = null
   #translator = new Translator()
+  get translator() { return this.#translator }
+
   constructor() {
     super()
+    window.translator = this.#translator
     this.history.addEventListener('popstate', ({ detail }) => {
       const resolved = this.resolveNavigation(detail.state)
       this.renderer.goTo(resolved)

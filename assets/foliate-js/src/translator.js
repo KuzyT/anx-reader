@@ -32,12 +32,13 @@ const translateBatch = async (texts, level = 'level0', pageInfo = '') => {
     if (Array.isArray(results) && results.length === texts.length) {
       return results
     }
-    // Fallback: if batch response is invalid, translate individually
-    console.warn('Batch translate returned invalid result, falling back to individual')
-    return await Promise.all(texts.map(t => translate(t)))
+    // Do not fan out into N single requests after a failed batch:
+    // it can create retry storms on provider/API errors.
+    console.warn('Batch translate returned invalid result, skipping individual fallback')
+    return Array(texts.length).fill('__ANX_ERROR__')
   } catch (error) {
-    console.error('Batch translation failed, falling back to individual:', error)
-    return await Promise.all(texts.map(t => translate(t)))
+    console.error('Batch translation failed, skipping individual fallback:', error)
+    return Array(texts.length).fill('__ANX_ERROR__')
   }
 }
 
@@ -54,6 +55,10 @@ export class Translator {
   #generationId = 0
   #scrollTimer = null
   #isScrolling = false
+  #retryAttempts = new WeakMap()
+  #rateLimitRetryAttempts = new WeakMap()
+  #blockedUntilRelocation = new WeakSet()
+  #maxImmediateRetryAttempts = 5
   
   constructor() {
     this.#initializeObserver()
@@ -157,6 +162,9 @@ export class Translator {
     
     // Invalidate any flying batches & clear current queue
     this.#generationId++
+    this.#retryAttempts = new WeakMap()
+    this.#rateLimitRetryAttempts = new WeakMap()
+    this.#blockedUntilRelocation = new WeakSet()
     
     if (this.#batchTimer) {
       clearTimeout(this.#batchTimer)
@@ -185,6 +193,114 @@ export class Translator {
 
   getTranslationLevel() {
     return this.#translationLevel
+  }
+
+  #getElementGlobalRect(element) {
+    const localRect = element.getBoundingClientRect()
+
+    let globalRect = {
+      top: localRect.top,
+      bottom: localRect.bottom,
+      left: localRect.left,
+      right: localRect.right
+    }
+
+    // Account for iframe offset: element rect is local to iframe viewport.
+    try {
+      const frame = element.ownerDocument?.defaultView?.frameElement
+      if (frame && typeof frame.getBoundingClientRect === 'function') {
+        const frameRect = frame.getBoundingClientRect()
+        globalRect = {
+          top: localRect.top + frameRect.top,
+          bottom: localRect.bottom + frameRect.top,
+          left: localRect.left + frameRect.left,
+          right: localRect.right + frameRect.left
+        }
+      }
+    } catch (_) {}
+
+    return globalRect
+  }
+
+  #getViewportSizeForElement(element) {
+    let viewportWidth = window.innerWidth
+    let viewportHeight = window.innerHeight
+    try {
+      const frame = element.ownerDocument?.defaultView?.frameElement
+      if (frame) {
+        viewportWidth = globalThis.top?.innerWidth ?? viewportWidth
+        viewportHeight = globalThis.top?.innerHeight ?? viewportHeight
+      }
+    } catch (_) {}
+    return { viewportWidth, viewportHeight }
+  }
+
+  #isCurrentlyVisible(element) {
+    const globalRect = this.#getElementGlobalRect(element)
+    const { viewportWidth, viewportHeight } = this.#getViewportSizeForElement(element)
+    return (
+      globalRect.top < viewportHeight &&
+      globalRect.bottom > 0 &&
+      globalRect.left < viewportWidth &&
+      globalRect.right > 0
+    )
+  }
+
+  #isWithinTranslateWindow(element) {
+    const globalRect = this.#getElementGlobalRect(element)
+    const { viewportWidth, viewportHeight } = this.#getViewportSizeForElement(element)
+
+    const maxAheadX = viewportWidth
+    const maxAheadY = viewportHeight
+    const isRtl = (document?.documentElement?.dir || '').toLowerCase() === 'rtl'
+
+    // Vertical range: current viewport + one viewport ahead (down)
+    const withinY =
+      globalRect.top < viewportHeight + maxAheadY && globalRect.bottom > 0
+
+    // Horizontal range: current page + next page (direction-aware)
+    let withinX = false
+    if (isRtl) {
+      withinX = globalRect.left < viewportWidth && globalRect.right > -maxAheadX
+    } else {
+      withinX =
+        globalRect.left < viewportWidth + maxAheadX && globalRect.right > 0
+    }
+
+    return withinX && withinY
+  }
+
+  #isWordLevelExpected() {
+    return this.#translationMode === TranslationMode.INTERLINEAR &&
+      this.#translationLevel !== 'level0'
+  }
+
+  #hasWordLevelMarkers(text) {
+    if (!text || typeof text !== 'string') return false
+    const trimmed = text.trim()
+    if (!trimmed) return false
+
+    // JSON word-pairs format
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(trimmed)
+        if (Array.isArray(parsed) && parsed.length > 0 && Array.isArray(parsed[0])) {
+          return true
+        }
+      } catch (_) {}
+    }
+
+    // Marker format: [word|translation]
+    return trimmed.includes('[') && trimmed.includes('|') && trimmed.includes(']')
+  }
+
+  #markNoTranslation(element, originalText) {
+    if (this.#translatedElements.has(element)) return
+    this.#translatedElements.set(element, {
+      originalText: originalText,
+      translatedText: '',
+      noTranslation: true
+    })
   }
 
   observeDocument(doc) {
@@ -235,32 +351,38 @@ export class Translator {
   }
 
   retranslateAll() {
-    this.#translatedElements = new WeakMap()
-    // Trigger re-translation by re-initializing observation on everything
-    this.#initializeObserver()
-    this.observedElements.forEach(el => {
-      // Small trick: remove then let observer find it again, 
-      // or just call #translateElement directly if it was public.
-      // But #initializeObserver already cleans and re-adds.
+    this.#generationId++
+    if (this.#batchTimer) {
+      clearTimeout(this.#batchTimer)
+      this.#batchTimer = null
+    }
+    this.#pendingQueue.clear()
+
+    // Remove stale translation overlays so cleared cache is reflected immediately.
+    this.observedElements.forEach(element => {
+      const translationElements = element.querySelectorAll('.translated-text')
+      translationElements.forEach(trans => trans.remove())
+      this.#restoreOriginalText(element)
     })
+
+    this.#translatedElements = new WeakMap()
+    this.#retryAttempts = new WeakMap()
+    this.#rateLimitRetryAttempts = new WeakMap()
+    this.#blockedUntilRelocation = new WeakSet()
+
+    if (this.#translationMode !== TranslationMode.OFF) {
+      this.#forceTranslateVisibleElements().catch(error =>
+        console.warn('Retranslate after cache clear failed:', error)
+      )
+    }
   }
 
   getVisibleOriginalTexts() {
     const texts = new Set()
-    const viewportWidth = window.innerWidth
-    const viewportHeight = window.innerHeight
 
     this.observedElements.forEach(element => {
-      const rect = element.getBoundingClientRect()
-      // Check if element is at least partially visible in viewport
-      const isVisible = (
-        rect.top < viewportHeight &&
-        rect.bottom > 0 &&
-        rect.left < viewportWidth &&
-        rect.right > 0
-      )
-
-      if (isVisible) {
+      // "Current page" must use real top-level viewport coordinates.
+      if (this.#isCurrentlyVisible(element)) {
         const text = this.#getElementOriginalText(element)
         if (text) texts.add(text)
       }
@@ -329,23 +451,44 @@ export class Translator {
   async #translateElement(element) {
     if (this.#translationMode === TranslationMode.OFF) return
     if (this.#translatedElements.has(element)) return
+    if (this.#blockedUntilRelocation.has(element)) return
     
+    if (!this.#isWithinTranslateWindow(element)) return
+
     const text = element.innerText?.trim()
     if (!text) return
     
     // Check local cache instantly first before adding to AI processing queue
     try {
       const cacheResultJson = await window.flutter_inappwebview.callHandler('checkTranslationCache', JSON.stringify([text]), this.#translationLevel)
-      const cacheResult = JSON.parse(cacheResultJson)
+      const cacheResult = JSON.parse(cacheResultJson || '{}')
 
-      if (cacheResult && cacheResult[text]) {
+      if (cacheResult && Object.prototype.hasOwnProperty.call(cacheResult, text)) {
         // Cache Hit: Render instantly without batch delays
-        this.#translatedElements.set(element, {
-          originalText: text,
-          translatedText: cacheResult[text]
-        })
-        this.#applyTranslation(element, cacheResult[text])
-        return
+        const cachedTranslation = (cacheResult[text] ?? '').toString()
+        const trimmedCached = cachedTranslation.trim()
+
+        // Empty cached value means "translation not needed" (intentional no-translation hit).
+        if (!trimmedCached) {
+          this.#markNoTranslation(element, text)
+          return
+        }
+
+        const isInvalidWordLevelCache =
+          this.#isWordLevelExpected() &&
+          (trimmedCached === text || !this.#hasWordLevelMarkers(trimmedCached))
+
+        if (isInvalidWordLevelCache) {
+          // Treat invalid/stale cache as miss so it can be repaired by AI.
+          // Continue below to enqueue for fresh translation.
+        } else {
+          this.#translatedElements.set(element, {
+            originalText: text,
+            translatedText: trimmedCached
+          })
+          this.#applyTranslation(element, trimmedCached)
+          return
+        }
       }
     } catch (e) {
       console.warn('Cache check failed:', e)
@@ -354,6 +497,87 @@ export class Translator {
     // Cache Miss: Add to batch queue for AI translation that waits for scroll stop
     this.#pendingQueue.set(element, text)
     this.#scheduleBatchFlush()
+  }
+
+  #scheduleRetry(element, text, { isRateLimit = false } = {}) {
+    if (this.#translatedElements.has(element)) return
+    if (this.#blockedUntilRelocation.has(element)) return
+
+    const currentAttempts = this.#retryAttempts.get(element) || 0
+    const generationAtSchedule = this.#generationId
+
+    if (!isRateLimit && currentAttempts >= this.#maxImmediateRetryAttempts) {
+      // Stop retrying this element until user relocates (page turn/scroll settle).
+      this.#blockedUntilRelocation.add(element)
+      this.#emitRetryInfo({
+        attempt: currentAttempts,
+        delayMs: 0,
+        isRateLimit: false,
+        text,
+        isBlocked: true
+      })
+      return
+    }
+
+    let attemptForLog = 0
+    let nextAttempts = currentAttempts
+    if (isRateLimit) {
+      const currentRateLimitAttempts = this.#rateLimitRetryAttempts.get(element) || 0
+      attemptForLog = currentRateLimitAttempts + 1
+      this.#rateLimitRetryAttempts.set(element, attemptForLog)
+    } else {
+      nextAttempts = currentAttempts + 1
+      this.#retryAttempts.set(element, nextAttempts)
+      attemptForLog = nextAttempts
+    }
+
+    const delayMs = isRateLimit
+      ? 60000
+      : Math.min(5000, 600 * nextAttempts)
+
+    this.#emitRetryInfo({
+      attempt: attemptForLog,
+      delayMs,
+      isRateLimit,
+      text,
+      isBlocked: false
+    })
+
+    setTimeout(() => {
+      if (this.#generationId !== generationAtSchedule) return
+      if (this.#translationMode === TranslationMode.OFF) return
+      if (this.#translatedElements.has(element)) return
+      if (this.#blockedUntilRelocation.has(element)) return
+      this.#pendingQueue.set(element, text)
+      this.#scheduleBatchFlush()
+    }, delayMs)
+  }
+
+  #emitRetryInfo({ attempt, delayMs, isRateLimit, text, isBlocked = false }) {
+    const maxAttempts = this.#maxImmediateRetryAttempts
+    const summary = isBlocked
+      ? `[ANX RETRY] stopped at ${attempt}/${maxAttempts} until relocate`
+      : isRateLimit
+        ? `[ANX RETRY] rate-limit retry #${attempt} in ${Math.round(delayMs / 1000)}s`
+        : `[ANX RETRY] retry #${attempt}/${maxAttempts} in ${delayMs}ms`
+    console.info(summary)
+
+    try {
+      const bridge = window.flutter_inappwebview
+      if (!bridge || typeof bridge.callHandler !== 'function') return
+
+      const promise = bridge.callHandler('onTranslationRetry', {
+        attempt,
+        maxAttempts,
+        delayMs,
+        isRateLimit,
+        isBlocked,
+        textPreview: typeof text === 'string' ? text.slice(0, 180) : ''
+      })
+      if (promise && typeof promise.catch === 'function') {
+        promise.catch(() => {})
+      }
+    } catch (_) {}
   }
 
   #scheduleBatchFlush() {
@@ -382,7 +606,6 @@ export class Translator {
     try {
       // For both word-level and sentence-level we want to translate as much as possible 
       // in one go. We try aiBatchSize elements at a time.
-      const isWordLevel = this.#translationMode === TranslationMode.INTERLINEAR && this.#translationLevel !== 'level0'
       const maxBatchSize = this.#aiBatchSize
       
       // Process chunks sequentially to avoid overwhelming the API
@@ -414,8 +637,38 @@ export class Translator {
             const originalText = chunkTexts[i]
             const translatedText = chunkTranslations[i]
             
-            // Skip empty/failed translations or if race condition happened
-            if (!translatedText || translatedText === originalText || this.#translatedElements.has(element)) {
+            // Skip if race condition happened
+            if (this.#translatedElements.has(element)) {
+              continue
+            }
+
+            if (translatedText === '__ANX_RATE_LIMIT__') {
+              this.#scheduleRetry(element, originalText, { isRateLimit: true })
+              continue
+            }
+
+            if (translatedText === '__ANX_ERROR__' || translatedText === '__ANX_RETRY__') {
+              this.#scheduleRetry(element, originalText)
+              continue
+            }
+
+            if (translatedText === '__ANX_CANCELLED__') {
+              // Do not mark as translated; allow future queue rebuild after relocation.
+              continue
+            }
+
+            if (!translatedText || translatedText.trim() === '') {
+              this.#markNoTranslation(element, originalText)
+              continue
+            }
+
+            if (translatedText.trim() === originalText) {
+              this.#markNoTranslation(element, originalText)
+              continue
+            }
+
+            if (this.#isWordLevelExpected() && !this.#hasWordLevelMarkers(translatedText)) {
+              this.#scheduleRetry(element, originalText)
               continue
             }
             
@@ -771,8 +1024,7 @@ export class Translator {
   async #forceTranslateVisibleElements() {
     // Queue all visible untranslated elements for batch translation
     this.observedElements.forEach(element => {
-      const rect = element.getBoundingClientRect()
-      const isVisible = rect.top < window.innerHeight && rect.bottom > 0
+      const isVisible = this.#isWithinTranslateWindow(element)
       
       if (isVisible && !this.#translatedElements.has(element)) {
         const text = element.innerText?.trim()

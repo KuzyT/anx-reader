@@ -31,7 +31,7 @@ class TranslationCacheDao {
     return result;
   }
 
-  /// Save new translations to cache (INSERT OR IGNORE to preserve existing).
+   /// Save translations to cache (INSERT OR REPLACE to refresh stale entries).
   Future<void> insertTranslations(
       int bookId, String level, Map<String, String> translations) async {
     if (translations.isEmpty) return;
@@ -41,7 +41,7 @@ class TranslationCacheDao {
     final now = DateTime.now().toIso8601String();
     for (final entry in translations.entries) {
       batch.rawInsert(
-        'INSERT OR IGNORE INTO tb_translation_cache '
+        'INSERT OR REPLACE INTO tb_translation_cache '
         '(book_id, level, original_text, translated_text, create_time) '
         'VALUES (?, ?, ?, ?, ?)',
         [bookId, level, entry.key, entry.value, now],

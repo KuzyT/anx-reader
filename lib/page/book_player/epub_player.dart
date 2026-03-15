@@ -30,6 +30,7 @@ import 'package:anx_reader/providers/bookmark.dart';
 import 'package:anx_reader/providers/chapter_content_bridge.dart';
 import 'package:anx_reader/providers/current_reading.dart';
 import 'package:anx_reader/service/book_player/book_player_server.dart';
+import 'package:anx_reader/service/ai_translation_status_service.dart';
 import 'package:anx_reader/providers/toc_search.dart';
 import 'package:anx_reader/service/tts/base_tts.dart';
 import 'package:anx_reader/service/tts/models/tts_sentence.dart';
@@ -160,6 +161,12 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
         reader.view.setAiBatchSize($size);
       }
       ''');
+  }
+
+  void _applyTranslationSettings() {
+    setTranslationLevel(Prefs().translationLevel);
+    setAiBatchSize(Prefs().aiBatchSize);
+    setTranslationMode(Prefs().getBookTranslationMode(widget.book.id));
   }
 
   Future<void> goToPercentage(double value) async {
@@ -629,6 +636,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
         handlerName: 'onLoadEnd',
         callback: (args) {
           widget.onLoadEnd();
+          _applyTranslationSettings();
         });
 
     controller.addJavaScriptHandler(
@@ -912,6 +920,50 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
       },
     );
     controller.addJavaScriptHandler(
+      handlerName: 'onTranslationRetry',
+      callback: (args) async {
+        try {
+          final raw = args.isNotEmpty ? args[0] : null;
+          final payload = raw is Map
+              ? raw.map((k, v) => MapEntry(k.toString(), v))
+              : <String, dynamic>{};
+
+          int parseInt(dynamic value, {int fallback = 0}) {
+            if (value is int) return value;
+            return int.tryParse(value?.toString() ?? '') ?? fallback;
+          }
+
+          bool parseBool(dynamic value) {
+            if (value is bool) return value;
+            final str = value?.toString().toLowerCase();
+            return str == 'true' || str == '1';
+          }
+
+          final attempt = parseInt(payload['attempt']);
+          final maxAttempts = parseInt(payload['maxAttempts'], fallback: 5);
+          final delayMs = parseInt(payload['delayMs']);
+          final isRateLimit = parseBool(payload['isRateLimit']);
+          final isBlocked = parseBool(payload['isBlocked']);
+          final textPreview = payload['textPreview']?.toString() ?? '';
+
+          final message = isBlocked
+              ? 'Retry stopped after $attempt/$maxAttempts attempts until page relocate'
+              : isRateLimit
+                  ? 'Rate-limit retry #$attempt in ${(delayMs / 1000).toStringAsFixed(0)}s'
+                  : 'Retry #$attempt/$maxAttempts in ${delayMs}ms';
+
+          AiTranslationStatusService().addLog(
+            message: message,
+            isError: isBlocked,
+            requestPayload: textPreview.isEmpty ? null : textPreview,
+          );
+        } catch (e) {
+          debugPrint('❌ [RETRY LOG BRIDGE ERROR] $e');
+        }
+        return true;
+      },
+    );
+    controller.addJavaScriptHandler(
       handlerName: 'translateBatch',
       callback: (args) async {
         try {
@@ -940,17 +992,60 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
             if (!mounted) return Completer<dynamic>().future;
 
             // Step 2: Check translation cache AFTER acquiring lock
-            final cached =
+            final cachedRaw =
                 await translationCacheDao.getTranslations(bookId, level, texts);
             if (!mounted) return Completer<dynamic>().future;
 
+            bool hasWordLevelMarkers(String value) {
+              final trimmed = value.trim();
+              if (trimmed.isEmpty) return false;
+              if (trimmed.contains('[') &&
+                  trimmed.contains('|') &&
+                  trimmed.contains(']')) {
+                return true;
+              }
+              if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+                try {
+                  final parsed = jsonDecode(trimmed);
+                  if (parsed is List &&
+                      parsed.isNotEmpty &&
+                      parsed.first is List) {
+                    return true;
+                  }
+                } catch (_) {}
+              }
+              return false;
+            }
+
+            final cached = Map<String, String>.from(cachedRaw);
+            final invalidCachedTexts = <String>{};
+            if (level != 'level0') {
+              for (final entry in cached.entries) {
+                final originalText = entry.key.trim();
+                final cachedText = entry.value.trim();
+                if (cachedText.isEmpty) {
+                  // Empty value is an intentional "no translation needed" marker.
+                  continue;
+                }
+                if (cachedText == originalText ||
+                    !hasWordLevelMarkers(cachedText)) {
+                  invalidCachedTexts.add(entry.key);
+                }
+              }
+            }
+
+            for (final text in invalidCachedTexts) {
+              cached.remove(text);
+            }
+
             final uncachedTexts =
-                texts.where((t) => !cached.containsKey(t)).toList();
+                texts.where((t) => !cached.containsKey(t)).toSet().toList();
             debugPrint(
-                '📋 [CACHE HIT] ${cached.length}/${texts.length} found in cache, ${uncachedTexts.length} need AI');
+                '📋 [CACHE HIT] ${cached.length}/${texts.length} found in cache, ${uncachedTexts.length} need AI (${invalidCachedTexts.length} stale cache entries ignored)');
 
             // Step 3: Translate uncached texts via AI
             Map<String, String> newTranslations = {};
+            Map<String, String> transientFailures = {};
             if (uncachedTexts.isNotEmpty) {
               if (!mounted) return Completer<dynamic>().future;
               final aiResults = await service.provider.translateBatch(
@@ -964,7 +1059,29 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
               for (int i = 0;
                   i < uncachedTexts.length && i < aiResults.length;
                   i++) {
-                newTranslations[uncachedTexts[i]] = aiResults[i];
+                final originalText = uncachedTexts[i];
+                final resultText = aiResults[i].trim();
+                if (resultText == '__ANX_RATE_LIMIT__' ||
+                    resultText == '__ANX_ERROR__' ||
+                    resultText == '__ANX_RETRY__' ||
+                    resultText == '__ANX_CANCELLED__') {
+                  transientFailures[originalText] = resultText;
+                  continue;
+                }
+                if (level != 'level0') {
+                  if (resultText.isEmpty ||
+                      resultText == originalText.trim()) {
+                    // Store empty to indicate "no translation needed"
+                    newTranslations[originalText] = '';
+                    continue;
+                  }
+                  if (!hasWordLevelMarkers(resultText)) {
+                    // Suspicious answer: keep it transient (no cache) so JS can retry with limits.
+                    transientFailures[originalText] = '__ANX_RETRY__';
+                    continue;
+                  }
+                }
+                newTranslations[originalText] = resultText;
               }
 
               // Step 4: Save new translations to cache
@@ -977,6 +1094,8 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
 
             // Step 5: Build ordered result (preserve original text order)
             final results = texts.map((text) {
+              final transient = transientFailures[text];
+              if (transient != null) return transient;
               return cached[text] ?? newTranslations[text] ?? text;
             }).toList();
 
@@ -1007,9 +1126,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
 
     // Initialize translation mode based on book-specific settings
     Future.delayed(const Duration(milliseconds: 300), () {
-      setTranslationLevel(Prefs().translationLevel);
-      setAiBatchSize(Prefs().aiBatchSize);
-      setTranslationMode(Prefs().getBookTranslationMode(widget.book.id));
+      _applyTranslationSettings();
     });
   }
 

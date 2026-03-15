@@ -2,6 +2,31 @@ import 'package:flutter/material.dart';
 import 'package:anx_reader/service/ai_translation_status_service.dart';
 import 'package:anx_reader/config/shared_preference_provider.dart';
 
+void showAiTranslationLogsModal(BuildContext context) {
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (context) {
+      return DraggableScrollableSheet(
+        initialChildSize: 0.6,
+        minChildSize: 0.4,
+        maxChildSize: 0.9,
+        builder: (context, scrollController) {
+          return Container(
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(16)),
+            ),
+            child: const AiStatusLogsModal(),
+          );
+        },
+      );
+    },
+  );
+}
+
 class AiStatusOverlay extends StatefulWidget {
   const AiStatusOverlay({super.key});
 
@@ -26,31 +51,6 @@ class _AiStatusOverlayState extends State<AiStatusOverlay> {
     if (mounted) {
       setState(() {});
     }
-  }
-
-  void _showLogsModal(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) {
-        return DraggableScrollableSheet(
-          initialChildSize: 0.6,
-          minChildSize: 0.4,
-          maxChildSize: 0.9,
-          builder: (context, scrollController) {
-            return Container(
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface,
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(16)),
-              ),
-              child: const AiStatusLogsModal(),
-            );
-          },
-        );
-      },
-    );
   }
 
   @override
@@ -96,7 +96,7 @@ class _AiStatusOverlayState extends State<AiStatusOverlay> {
       bottom: 80,
       right: 20,
       child: GestureDetector(
-        onTap: () => _showLogsModal(context),
+        onTap: () => showAiTranslationLogsModal(context),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(

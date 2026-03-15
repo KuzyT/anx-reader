@@ -11,6 +11,7 @@ import 'package:anx_reader/l10n/generated/L10n.dart';
 import 'package:anx_reader/page/reading_page.dart';
 import 'package:anx_reader/page/settings_page/subpage/fonts.dart';
 import 'package:anx_reader/widgets/common/anx_segmented_button.dart';
+import 'package:anx_reader/widgets/reading_page/ai_status_overlay.dart';
 import 'package:flutter/material.dart';
 import 'package:icons_plus/icons_plus.dart';
 
@@ -100,8 +101,26 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
 
     if (scope == ClearCacheScope.page || scope == ClearCacheScope.chapter) {
       final jsMethod = scope == ClearCacheScope.page
-          ? 'if (window.view && window.view.translator) window.view.translator.getVisibleOriginalTexts()'
-          : 'if (window.view && window.view.translator) window.view.translator.getChapterOriginalTexts()';
+          ? '''
+(() => {
+  const reader = window.reader;
+  const translator = reader && reader.view && reader.view.translator;
+  if (!translator || typeof translator.getVisibleOriginalTexts !== 'function') {
+    return [];
+  }
+  return translator.getVisibleOriginalTexts() || [];
+})()
+'''
+          : '''
+(() => {
+  const reader = window.reader;
+  const translator = reader && reader.view && reader.view.translator;
+  if (!translator || typeof translator.getChapterOriginalTexts !== 'function') {
+    return [];
+  }
+  return translator.getChapterOriginalTexts() || [];
+})()
+''';
 
       final result = await epubPlayerKey.currentState?.webViewController
           .evaluateJavascript(source: jsMethod);
@@ -135,8 +154,16 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
 
     // Refresh UI: trigger re-translation observation in WebView
     await epubPlayerKey.currentState?.webViewController?.evaluateJavascript(
-        source:
-            'if (window.view && window.view.translator) window.view.translator.retranslateAll()');
+      source: '''
+(() => {
+  const reader = window.reader;
+  const translator = reader && reader.view && reader.view.translator;
+  if (translator && typeof translator.retranslateAll === 'function') {
+    translator.retranslateAll();
+  }
+})()
+''',
+    );
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -884,13 +911,23 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
               children: [
                 Text('AI Translation Status & Logs',
                     style: Theme.of(context).textTheme.titleMedium),
-                Switch(
-                  value: Prefs().showAiTranslationStatus,
-                  onChanged: (value) {
-                    setState(() {
-                      Prefs().showAiTranslationStatus = value;
-                    });
-                  },
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextButton.icon(
+                      onPressed: () => showAiTranslationLogsModal(context),
+                      icon: const Icon(Icons.receipt_long, size: 16),
+                      label: const Text('Логи'),
+                    ),
+                    Switch(
+                      value: Prefs().showAiTranslationStatus,
+                      onChanged: (value) {
+                        setState(() {
+                          Prefs().showAiTranslationStatus = value;
+                        });
+                      },
+                    ),
+                  ],
                 ),
               ],
             ),

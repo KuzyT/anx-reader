@@ -54,6 +54,8 @@ class AiTranslationStatusService extends ChangeNotifier {
   int _translatingCount = 0;
   final List<AiLogEntry> _logs = [];
   final List<AiRequestStats> _requestStats = [];
+  static const int _maxLogs = 50;
+  static const int _maxRequestStats = 200;
   String _lastErrorMessage = '';
 
   Timer? _durationTimer;
@@ -117,8 +119,8 @@ class AiTranslationStatusService extends ChangeNotifier {
       responsePayload: responsePayload,
     ));
 
-    // Keep only last 50 logs to prevent memory leak
-    if (_logs.length > 50) {
+    // Keep only last N logs to prevent memory leak
+    if (_logs.length > _maxLogs) {
       _logs.removeAt(0);
     }
 
@@ -138,11 +140,15 @@ class AiTranslationStatusService extends ChangeNotifier {
       durationMs: durationMs,
       modelName: modelName,
     ));
+    if (_requestStats.length > _maxRequestStats) {
+      _requestStats.removeAt(0);
+    }
     notifyListeners();
   }
 
   void clearLogs() {
     _logs.clear();
+    _requestStats.clear();
     notifyListeners();
   }
 }

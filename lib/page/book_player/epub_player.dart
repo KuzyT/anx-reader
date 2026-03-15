@@ -36,6 +36,7 @@ import 'package:anx_reader/service/tts/base_tts.dart';
 import 'package:anx_reader/service/tts/models/tts_sentence.dart';
 import 'package:anx_reader/service/tts/tts_handler.dart';
 import 'package:anx_reader/utils/coordinates_to_part.dart';
+import 'package:anx_reader/utils/env_var.dart';
 import 'package:anx_reader/utils/js/convert_dart_color_to_js.dart';
 import 'package:anx_reader/utils/platform_utils.dart';
 import 'package:anx_reader/models/book_note.dart';
@@ -114,6 +115,12 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
 
   // Translation queue lock
   static Future<void>? _activeTranslationRequest;
+
+  void _aiDebugLog(String message) {
+    if (EnvVar.enableAiConsoleLogs) {
+      debugPrint(message);
+    }
+  }
 
   // to know anytime if we are on top of navigation stack
   bool get _isTopOfNavigationStack =>
@@ -683,7 +690,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
       callback: (args) async {
         final payload = args.isNotEmpty ? args.first : null;
         await _handleExternalLink(payload);
-        if (!mounted) return Completer<dynamic>().future;
+        if (!mounted) return null;
       },
     );
     controller.addJavaScriptHandler(
@@ -862,12 +869,12 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
                   createTime: DateTime.now(),
                 ),
               );
-          if (!mounted) return Completer<dynamic>().future;
+          if (!mounted) return null;
           bookmarkCfi = cfi;
           bookmarkExists = true;
           addBookmark(bookmark);
         }
-        if (!mounted) return Completer<dynamic>().future;
+        if (!mounted) return null;
         widget.updateParent();
         setState(() {});
       },
@@ -876,22 +883,22 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
       handlerName: 'translateText',
       callback: (args) async {
         try {
-          if (!mounted) return Completer<dynamic>().future;
+          if (!mounted) return 'Translation cancelled';
           String text = args[0];
-          debugPrint('🌐 [TRANSLATE REQUEST] "$text"');
+          _aiDebugLog('🌐 [TRANSLATE REQUEST] "$text"');
           final service = Prefs().fullTextTranslateService;
           final from = Prefs().fullTextTranslateFrom;
           final to = Prefs().fullTextTranslateTo;
 
           final result =
               await service.provider.translateTextOnly(text, from, to);
-          if (!mounted) return Completer<dynamic>().future;
-          debugPrint('✅ [TRANSLATE RESPONSE] "$text" → "$result"');
+          if (!mounted) return 'Translation cancelled';
+          _aiDebugLog('✅ [TRANSLATE RESPONSE] "$text" → "$result"');
           return result;
         } catch (e) {
-          debugPrint('❌ [TRANSLATE ERROR] "${args[0]}" → $e');
+          _aiDebugLog('❌ [TRANSLATE ERROR] "${args[0]}" → $e');
           AnxLog.severe('Translation error: $e');
-          if (!mounted) return Completer<dynamic>().future;
+          if (!mounted) return 'Translation cancelled';
           return 'Translation error: $e';
         }
       },
@@ -900,7 +907,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
       handlerName: 'checkTranslationCache',
       callback: (args) async {
         try {
-          if (!mounted) return Completer<dynamic>().future;
+          if (!mounted) return "{}";
           final String textsJsonStr = args[0];
           final String level = args.length > 1 ? args[1] : 'level0';
           final List<dynamic> textsList = jsonDecode(textsJsonStr);
@@ -909,12 +916,12 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
 
           final cached = await translationCacheDao.getTranslations(
               bookId, level, texts);
-          if (!mounted) return Completer<dynamic>().future;
+          if (!mounted) return "{}";
           return jsonEncode(cached);
         } catch (e) {
-          debugPrint('❌ [CACHE CHECK ERROR] $e');
+          _aiDebugLog('❌ [CACHE CHECK ERROR] $e');
           AnxLog.severe('Cache check error: $e');
-          if (!mounted) return Completer<dynamic>().future;
+          if (!mounted) return "{}";
           return "{}";
         }
       },
@@ -958,7 +965,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
             requestPayload: textPreview.isEmpty ? null : textPreview,
           );
         } catch (e) {
-          debugPrint('❌ [RETRY LOG BRIDGE ERROR] $e');
+          _aiDebugLog('❌ [RETRY LOG BRIDGE ERROR] $e');
         }
         return true;
       },
@@ -973,7 +980,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
           final List<dynamic> textsList = jsonDecode(textsJsonStr);
           final texts = textsList.map((e) => e.toString()).toList();
           final service = Prefs().fullTextTranslateService;
-          debugPrint(
+          _aiDebugLog(
               '🌐 [TRANSLATE BATCH] service=${service.name}, level=$level, ${texts.length} texts');
           final from = Prefs().fullTextTranslateFrom;
           final to = Prefs().fullTextTranslateTo;
@@ -983,18 +990,18 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
           while (_activeTranslationRequest != null) {
             await _activeTranslationRequest;
           }
-          if (!mounted) return Completer<dynamic>().future;
+          if (!mounted) return jsonEncode(<String>[]);
 
           final completer = Completer<void>();
           _activeTranslationRequest = completer.future;
 
           try {
-            if (!mounted) return Completer<dynamic>().future;
+            if (!mounted) return jsonEncode(<String>[]);
 
             // Step 2: Check translation cache AFTER acquiring lock
             final cachedRaw =
                 await translationCacheDao.getTranslations(bookId, level, texts);
-            if (!mounted) return Completer<dynamic>().future;
+            if (!mounted) return jsonEncode(<String>[]);
 
             bool hasWordLevelMarkers(String value) {
               final trimmed = value.trim();
@@ -1040,19 +1047,19 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
 
             final uncachedTexts =
                 texts.where((t) => !cached.containsKey(t)).toSet().toList();
-            debugPrint(
+            _aiDebugLog(
                 '📋 [CACHE HIT] ${cached.length}/${texts.length} found in cache, ${uncachedTexts.length} need AI (${invalidCachedTexts.length} stale cache entries ignored)');
 
             // Step 3: Translate uncached texts via AI
             Map<String, String> newTranslations = {};
             Map<String, String> transientFailures = {};
             if (uncachedTexts.isNotEmpty) {
-              if (!mounted) return Completer<dynamic>().future;
+              if (!mounted) return jsonEncode(<String>[]);
               final aiResults = await service.provider.translateBatch(
                   uncachedTexts, from, to,
                   level: level, pageInfo: pageInfo, ref: ref);
-              if (!mounted) return Completer<dynamic>().future;
-              debugPrint(
+              if (!mounted) return jsonEncode(<String>[]);
+              _aiDebugLog(
                   '✅ [AI RESPONSE] ${aiResults.length} results for ${uncachedTexts.length} texts');
 
               // Map results back to original texts
@@ -1088,7 +1095,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
               if (newTranslations.isNotEmpty) {
                 await translationCacheDao.insertTranslations(
                     bookId, level, newTranslations);
-                if (!mounted) return Completer<dynamic>().future;
+                if (!mounted) return jsonEncode(<String>[]);
               }
             }
 
@@ -1099,7 +1106,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
               return cached[text] ?? newTranslations[text] ?? text;
             }).toList();
 
-            debugPrint(
+            _aiDebugLog(
                 '✅ [TRANSLATE BATCH RESPONSE] ${results.length} results: ${results.map((r) => '"$r"').join(', ')}');
             return jsonEncode(results);
           } finally {
@@ -1107,9 +1114,9 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
             completer.complete();
           }
         } catch (e) {
-          debugPrint('❌ [TRANSLATE BATCH ERROR] $e');
+          _aiDebugLog('❌ [TRANSLATE BATCH ERROR] $e');
           AnxLog.severe('Batch translation error: $e');
-          if (!mounted) return Completer<dynamic>().future;
+          if (!mounted) return jsonEncode(<String>[]);
           return jsonEncode(<String>[]);
         }
       },

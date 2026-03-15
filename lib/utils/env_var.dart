@@ -29,4 +29,13 @@ class EnvVar {
   static bool get showTelegramLink => !showBeian;
 
   static bool get enableAIFeature => !isOhosStore;
+
+  /// Enables verbose AI console logging only when app is started with `--debug`.
+  /// Fallback for CI/dev: `--dart-define=anx_debug_logs=true`.
+  static bool get enableAiConsoleLogs {
+    const bool fromDefine =
+        bool.fromEnvironment('anx_debug_logs', defaultValue: false);
+    if (fromDefine) return true;
+    return Platform.executableArguments.any((arg) => arg == '--debug');
+  }
 }

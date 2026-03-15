@@ -7,7 +7,8 @@ import 'package:anx_reader/service/ai/prompt_generate.dart';
 import 'package:anx_reader/service/ai/index.dart';
 import 'package:anx_reader/service/config/config_item.dart';
 import 'package:anx_reader/service/translate/index.dart';
- import 'package:anx_reader/service/ai_translation_status_service.dart';
+import 'package:anx_reader/service/ai_translation_status_service.dart';
+import 'package:anx_reader/utils/env_var.dart';
 import 'package:anx_reader/utils/log/common.dart';
 import 'package:anx_reader/utils/toast/common.dart';
 import 'package:anx_reader/widgets/ai/ai_stream.dart';
@@ -17,6 +18,11 @@ import 'dart:async';
 
 class AiTranslateProvider extends TranslateServiceProvider {
   static Future<void>? _activeBatchRequest;
+  static void _debugLog(String message) {
+    if (EnvVar.enableAiConsoleLogs) {
+      debugPrint(message);
+    }
+  }
 
   @override
   TranslateService get service => TranslateService.ai;
@@ -129,7 +135,7 @@ class AiTranslateProvider extends TranslateServiceProvider {
 
       if (level != 'level0') {
         // Word-level translation with word markers for interlinear mode
-        debugPrint(
+        _debugLog(
             '🎯 [TRANSLATE LEVEL] Using WORD-LEVEL prompt for level=$level');
         payload = generatePromptTranslateBatchWordLevel(
           textsJson,
@@ -139,7 +145,7 @@ class AiTranslateProvider extends TranslateServiceProvider {
         );
       } else {
         // Sentence-level translation for level0
-        debugPrint(
+        _debugLog(
             '🎯 [TRANSLATE LEVEL] Using SENTENCE-LEVEL prompt for level0');
         payload = generatePromptTranslateBatch(
           textsJson,
@@ -152,7 +158,7 @@ class AiTranslateProvider extends TranslateServiceProvider {
 
       // Log the full prompt being sent
       promptText = messages.map((m) => m.contentAsString).join('\n');
-      debugPrint('📨 [AI PROMPT] (${promptText.length} chars):\n$promptText');
+      _debugLog('📨 [AI PROMPT] (${promptText.length} chars):\n$promptText');
 
       // Collect the full AI response with timing
       final stopwatch = Stopwatch()..start();
@@ -161,7 +167,7 @@ class AiTranslateProvider extends TranslateServiceProvider {
         fullResponse = chunk;
       }
       stopwatch.stop();
-      debugPrint(
+      _debugLog(
           '📩 [AI RESPONSE] (${stopwatch.elapsed.inMilliseconds}ms, ${fullResponse.length} chars):\n$fullResponse');
 
       // Check for textual errors from AI like "Error: Rate limit reached. Try again later."
@@ -238,7 +244,7 @@ class AiTranslateProvider extends TranslateServiceProvider {
         // Wait and perform exactly ONE retry
         AnxLog.info(
             'Rate limit hit. Waiting for ${delaySeconds.toStringAsFixed(1)} seconds before retrying batch...');
-        debugPrint(
+        _debugLog(
             '⏳ [RATE LIMIT] Waiting ${delaySeconds.toStringAsFixed(1)}s...');
 
         statusService.addLog(
@@ -265,7 +271,7 @@ class AiTranslateProvider extends TranslateServiceProvider {
         statusService.startTranslating(texts.length);
 
         try {
-          debugPrint('🔄 [RETRYING] Retrying batch translation after delay...');
+          _debugLog('🔄 [RETRYING] Retrying batch translation after delay...');
           // RE-BUILD messages for retry
           final textsJsonRetry = jsonEncode(texts);
           late PromptTemplatePayload payloadRetry;
@@ -370,7 +376,7 @@ class AiTranslateProvider extends TranslateServiceProvider {
         cleaned = fenceMatch.group(1)!.trim();
       }
 
-      debugPrint('📋 [BATCH PARSE] Cleaned response:\n$cleaned');
+      _debugLog('📋 [BATCH PARSE] Cleaned response:\n$cleaned');
 
       List<dynamic>? outerArray;
 
@@ -400,18 +406,18 @@ class AiTranslateProvider extends TranslateServiceProvider {
         final firstElement = outerArray[0];
         if (firstElement is List) {
           // Word-pair format: [[word, translation], ...] — serialize each element
-          debugPrint('📋 [BATCH PARSE] Word-pair format detected');
+          _debugLog('📋 [BATCH PARSE] Word-pair format detected');
           return outerArray.map((e) => jsonEncode(e)).toList();
         } else if (firstElement is String) {
           // Flat string format (fallback from AI)
-          debugPrint('📋 [BATCH PARSE] Flat string format detected');
+          _debugLog('📋 [BATCH PARSE] Flat string format detected');
           return outerArray.map((e) => e.toString()).toList();
         }
       }
 
-      debugPrint('📋 [BATCH PARSE] Failed to parse response');
+      _debugLog('📋 [BATCH PARSE] Failed to parse response');
     } catch (e) {
-      debugPrint('📋 [BATCH PARSE] Parse error: $e');
+      _debugLog('📋 [BATCH PARSE] Parse error: $e');
     }
     return null;
   }

@@ -690,8 +690,9 @@ export class Translator {
       // Detailed error in translation marks
       for (const element of elements) {
         if (!this.#translatedElements.has(element)) {
+          const fallbackOriginal = batch.get(element) || element.innerText?.trim() || ''
           this.#translatedElements.set(element, {
-            originalText: this.#pendingQueue.get(element),
+            originalText: fallbackOriginal,
             translatedText: '[Error: Translation failed]'
           })
           this.#applyTranslation(element, '[Error: Translation failed]')

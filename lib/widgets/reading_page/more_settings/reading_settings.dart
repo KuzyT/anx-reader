@@ -8,6 +8,7 @@ import 'package:anx_reader/enums/translation_level.dart';
 import 'package:anx_reader/enums/writing_mode.dart';
 import 'package:anx_reader/enums/code_highlight_theme.dart';
 import 'package:anx_reader/l10n/generated/L10n.dart';
+import 'package:anx_reader/l10n/translation_ui_fallback.dart';
 import 'package:anx_reader/page/reading_page.dart';
 import 'package:anx_reader/page/settings_page/subpage/fonts.dart';
 import 'package:anx_reader/widgets/common/anx_segmented_button.dart';
@@ -42,31 +43,32 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text('Очистить кеш переводов'),
+              title: Text(L10n.of(context).translationClearCacheTitle),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   RadioListTile<ClearCacheScope>(
-                    title: const Text('Текущая страница'),
+                    title: Text(L10n.of(context).translationClearCacheCurrentPage),
                     value: ClearCacheScope.page,
                     groupValue: scope,
                     onChanged: (v) => setDialogState(() => scope = v!),
                   ),
                   RadioListTile<ClearCacheScope>(
-                    title: const Text('Текущая глава'),
+                    title: Text(L10n.of(context).translationClearCacheCurrentChapter),
                     value: ClearCacheScope.chapter,
                     groupValue: scope,
                     onChanged: (v) => setDialogState(() => scope = v!),
                   ),
                   RadioListTile<ClearCacheScope>(
-                    title: const Text('Вся книга'),
+                    title: Text(L10n.of(context).translationClearCacheWholeBook),
                     value: ClearCacheScope.book,
                     groupValue: scope,
                     onChanged: (v) => setDialogState(() => scope = v!),
                   ),
                   const Divider(),
                   SwitchListTile(
-                    title: Text('Только уровень ${currentLevelEnum.displayName}'),
+                    title: Text(L10n.of(context)
+                        .translationClearCacheOnlyLevel(currentLevelEnum.displayName)),
                     value: currentLevelOnly,
                     onChanged: (v) =>
                         setDialogState(() => currentLevelOnly = v),
@@ -76,7 +78,7 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('Отмена'),
+                  child: Text(L10n.of(context).commonCancel),
                 ),
                 TextButton(
                   onPressed: () async {
@@ -84,8 +86,10 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
                     await _confirmClearCache(bookId, scope,
                         currentLevelOnly ? currentLevelName : null);
                   },
-                  child: const Text('Очистить',
-                      style: TextStyle(color: Colors.red)),
+                  child: Text(
+                    L10n.of(context).storageClearCache,
+                    style: const TextStyle(color: Colors.red),
+                  ),
                 ),
               ],
             );
@@ -140,8 +144,8 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
       // ABORT to avoid clearing the whole book.
       if (originals == null || originals.isEmpty) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Ошибка: не удалось определить текст для удаления'),
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(L10n.of(context).translationClearCacheResolveTextError),
             backgroundColor: Colors.red,
           ));
         }
@@ -167,7 +171,7 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Кеш очищен ($count записей)'),
+        content: Text(L10n.of(context).translationClearCacheSuccess(count)),
         duration: const Duration(seconds: 2),
       ));
     }
@@ -458,7 +462,7 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
                         icon: const Icon(Icons.compare),
                       ),
                       SegmentButtonItem(
-                        label: 'Надстр.',
+                        label: L10n.of(context).translationInterlinearShort,
                         value: TranslationModeEnum.interlinear,
                         icon: const Icon(Icons.format_line_spacing),
                       ),
@@ -865,7 +869,7 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('AI Batch Size',
+                Text(L10n.of(context).translationAiBatchSize,
                     style: Theme.of(context).textTheme.titleMedium),
                 Text(Prefs().aiBatchSize.toString(),
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
@@ -874,7 +878,7 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
               ],
             ),
             if (!isReading)
-              Text('Only available while reading',
+              Text(L10n.of(context).translationOnlyWhileReading,
                   style: Theme.of(context)
                       .textTheme
                       .bodySmall
@@ -909,7 +913,7 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('AI Translation Status & Logs',
+                Text(L10n.of(context).translationAiStatusLogsTitle,
                     style: Theme.of(context).textTheme.titleMedium),
                 Row(
                   mainAxisSize: MainAxisSize.min,
@@ -917,7 +921,7 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
                     TextButton.icon(
                       onPressed: () => showAiTranslationLogsModal(context),
                       icon: const Icon(Icons.receipt_long, size: 16),
-                      label: const Text('Логи'),
+                      label: Text(L10n.of(context).translationLogsShort),
                     ),
                     Switch(
                       value: Prefs().showAiTranslationStatus,
@@ -943,10 +947,10 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 8),
-            Text('Translation Level',
+            Text(L10n.of(context).translationLevelLabel,
                 style: Theme.of(context).textTheme.titleMedium),
             if (!isReading)
-              Text('Only available while reading',
+              Text(L10n.of(context).translationOnlyWhileReading,
                   style: Theme.of(context)
                       .textTheme
                       .bodySmall
@@ -1010,7 +1014,7 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
                   child: OutlinedButton.icon(
                     onPressed: () => _showClearCacheDialog(),
                     icon: const Icon(Icons.delete_sweep_outlined, size: 18),
-                    label: const Text('Очистить кеш переводов'),
+                    label: Text(L10n.of(context).translationClearCacheTitle),
                   ),
                 ),
               ],

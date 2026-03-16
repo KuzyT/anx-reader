@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:anx_reader/service/ai_translation_status_service.dart';
 import 'package:anx_reader/config/shared_preference_provider.dart';
+import 'package:anx_reader/l10n/generated/L10n.dart';
+import 'package:anx_reader/l10n/translation_ui_fallback.dart';
 
 void showAiTranslationLogsModal(BuildContext context) {
   showModalBottomSheet(
@@ -73,18 +75,20 @@ class _AiStatusOverlayState extends State<AiStatusOverlay> {
         icon = Icons.hourglass_bottom;
         iconColor = Theme.of(context).colorScheme.primary;
         final duration = AiTranslationStatusService().translationDurationSec;
-        final durationStr = duration > 0 ? ' (${duration}s)' : '';
-        text = 'Translating $count items...$durationStr';
+        text = duration > 0
+            ? L10n.of(context).translationAiStatusTranslatingWithDuration(
+                count, duration)
+            : L10n.of(context).translationAiStatusTranslating(count);
         break;
       case AiTranslationState.waitingRateLimit:
         icon = Icons.hourglass_empty;
         iconColor = Theme.of(context).colorScheme.error;
-        text = 'Rate limit (429) hit. Waiting...';
+        text = L10n.of(context).translationAiStatusRateLimitWaiting;
         break;
       case AiTranslationState.error:
         icon = Icons.error_outline;
         iconColor = Theme.of(context).colorScheme.error;
-        text = 'Error';
+        text = L10n.of(context).commonError;
         break;
       default:
         icon = Icons.info_outline;
@@ -178,7 +182,7 @@ class _AiStatusLogsModalState extends State<AiStatusLogsModal> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                'AI Translation Logs',
+                L10n.of(context).translationAiLogsTitle,
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               IconButton(
@@ -186,15 +190,15 @@ class _AiStatusLogsModalState extends State<AiStatusLogsModal> {
                 onPressed: () {
                   AiTranslationStatusService().clearLogs();
                 },
-                tooltip: 'Clear Logs',
+                tooltip: L10n.of(context).translationAiLogsClear,
               ),
             ],
           ),
         ),
-        const TabBar(
+        TabBar(
           tabs: [
-            Tab(text: 'Logs'),
-            Tab(text: 'Requests History'),
+            Tab(text: L10n.of(context).translationLogsShort),
+            Tab(text: L10n.of(context).translationAiRequestsHistory),
           ],
         ),
         Expanded(
@@ -211,7 +215,7 @@ class _AiStatusLogsModalState extends State<AiStatusLogsModal> {
 
   Widget _buildLogsTab(List<AiLogEntry> logs) {
     return logs.isEmpty
-        ? const Center(child: Text('No logs available'))
+        ? Center(child: Text(L10n.of(context).translationAiNoLogs))
         : ListView.separated(
             padding: const EdgeInsets.all(16),
             itemCount: logs.length,
@@ -225,7 +229,7 @@ class _AiStatusLogsModalState extends State<AiStatusLogsModal> {
 
   Widget _buildStatsTab(List<AiRequestStats> stats) {
     return stats.isEmpty
-        ? const Center(child: Text('No requests yet'))
+        ? Center(child: Text(L10n.of(context).translationAiNoRequests))
         : ListView.separated(
             padding: const EdgeInsets.all(16),
             itemCount: stats.length,
@@ -260,7 +264,10 @@ class _AiStatusLogsModalState extends State<AiStatusLogsModal> {
         const SizedBox(width: 8),
         Expanded(
           child: Text(
-            '${stat.itemsCount} items${stat.durationMs > 0 ? ' in ${stat.durationMs}ms' : ''}',
+            stat.durationMs > 0
+                ? L10n.of(context)
+                    .translationAiRequestStatWithDuration(stat.itemsCount, stat.durationMs)
+                : L10n.of(context).translationAiRequestStat(stat.itemsCount),
             style: TextStyle(
               color: Theme.of(context).colorScheme.onSurface,
             ),
@@ -303,14 +310,14 @@ class _AiStatusLogsModalState extends State<AiStatusLogsModal> {
         ),
         if (log.requestPayload != null && log.requestPayload!.isNotEmpty) ...[
           const SizedBox(height: 8),
-          const Text('Request:',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+          Text(L10n.of(context).translationAiRequestLabel,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
           _buildCodeBlock(context, log.requestPayload!),
         ],
         if (log.responsePayload != null && log.responsePayload!.isNotEmpty) ...[
           const SizedBox(height: 8),
-          const Text('Response:',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+          Text(L10n.of(context).translationAiResponseLabel,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
           _buildCodeBlock(context, log.responsePayload!),
         ],
       ],

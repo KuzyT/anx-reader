@@ -869,5 +869,62 @@
   "settingsAiChatDisplayModePopup": "Popup",
   "settingsAiPanelPosition": "Panel Position",
   "settingsAiPanelPositionBottom": "Bottom",
-  "settingsAiPanelPositionRight": "Right"
+  "settingsAiPanelPositionRight": "Right",
+  "translationClearCacheTitle": "Clear translation cache",
+  "translationClearCacheCurrentPage": "Current page",
+  "translationClearCacheCurrentChapter": "Current chapter",
+  "translationClearCacheWholeBook": "Whole book",
+  "translationClearCacheOnlyLevel": "Only level {level}",
+  "@translationClearCacheOnlyLevel": {
+    "placeholders": {
+      "level": {}
+    }
+  },
+  "translationClearCacheResolveTextError": "Error: failed to determine text to remove",
+  "translationClearCacheSuccess": "Cache cleared ({count} entries)",
+  "@translationClearCacheSuccess": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "translationInterlinearShort": "Interlin.",
+  "translationAiBatchSize": "AI Batch Size",
+  "translationOnlyWhileReading": "Only available while reading",
+  "translationAiStatusLogsTitle": "AI Translation Status & Logs",
+  "translationLogsShort": "Logs",
+  "translationLevelLabel": "Translation Level",
+  "translationAiStatusTranslating": "Translating {count} items...",
+  "@translationAiStatusTranslating": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "translationAiStatusTranslatingWithDuration": "Translating {count} items... ({duration}s)",
+  "@translationAiStatusTranslatingWithDuration": {
+    "placeholders": {
+      "count": {},
+      "duration": {}
+    }
+  },
+  "translationAiStatusRateLimitWaiting": "Rate limit (429) hit. Waiting...",
+  "translationAiLogsTitle": "AI Translation Logs",
+  "translationAiLogsClear": "Clear Logs",
+  "translationAiRequestsHistory": "Requests History",
+  "translationAiNoLogs": "No logs available",
+  "translationAiNoRequests": "No requests yet",
+  "translationAiRequestStat": "{count} items",
+  "@translationAiRequestStat": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "translationAiRequestStatWithDuration": "{count} items in {duration}ms",
+  "@translationAiRequestStatWithDuration": {
+    "placeholders": {
+      "count": {},
+      "duration": {}
+    }
+  },
+  "translationAiRequestLabel": "Request:",
+  "translationAiResponseLabel": "Response:"
 }

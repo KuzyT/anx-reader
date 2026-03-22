@@ -161,6 +161,23 @@ PromptTemplatePayload generatePromptTranslateBatchWordLevel(
   );
 }
 
+PromptTemplatePayload generatePromptClassifyWordLevels(
+    String wordsJson, String fromLocale) {
+  final prompt = Prefs().getAiPrompt(AiPrompts.classifyWordLevels);
+  final normalized = _normalizePrompt(prompt);
+  final template = ChatPromptTemplate.fromPromptMessages([
+    HumanChatMessagePromptTemplate.fromTemplate(normalized),
+  ]);
+  return PromptTemplatePayload(
+    template: template,
+    variables: {
+      'words': wordsJson,
+      'from_locale': fromLocale,
+    },
+    identifier: AiPrompts.classifyWordLevels,
+  );
+}
+
 String _normalizePrompt(String template) {
   return template.replaceAll('{{', '{').replaceAll('}}', '}');
 }

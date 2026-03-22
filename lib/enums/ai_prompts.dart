@@ -7,6 +7,7 @@ enum AiPrompts {
   translateBatch,
   translateBatchWordLevel,
   mindmap,
+  classifyWordLevels,
 }
 
 extension AiPromptsJson on AiPrompts {
@@ -180,6 +181,19 @@ After the tool call, summarize the structure in 3 bullet sentences highlighting:
 1. Overall framing of the mind map
 2. Key branches or clusters
 3. Notable insights or tensions revealed
+        ''';
+
+      case AiPrompts.classifyWordLevels:
+        return '''
+You are assigning CEFR levels to vocabulary items.
+
+Rules:
+- Output ONLY valid JSON.
+- Input is a JSON array of words: {{words}}
+- Source language is {{from_locale}}
+- Return a JSON object where each key is the original word and value is one of:
+  "0", "a1", "a2", "b1", "b2", "c1", "c2", or null if uncertain.
+- Do not translate. Do not add commentary.
         ''';
     }
   }

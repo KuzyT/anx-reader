@@ -65,6 +65,7 @@ class _AiStatusOverlayState extends State<AiStatusOverlay> {
     }
 
     final count = AiTranslationStatusService().translatingCount;
+    final activeRequests = AiTranslationStatusService().activeRequestsCount;
 
     IconData icon;
     Color iconColor;
@@ -79,6 +80,9 @@ class _AiStatusOverlayState extends State<AiStatusOverlay> {
             ? L10n.of(context).translationAiStatusTranslatingWithDuration(
                 count, duration)
             : L10n.of(context).translationAiStatusTranslating(count);
+        if (activeRequests > 1) {
+          text = '$text • $activeRequests req';
+        }
         break;
       case AiTranslationState.waitingRateLimit:
         icon = Icons.hourglass_empty;
@@ -273,6 +277,17 @@ class _AiStatusLogsModalState extends State<AiStatusLogsModal> {
             ),
           ),
         ),
+        if (stat.modelName.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(left: 8),
+            child: Text(
+              stat.modelName,
+              style: TextStyle(
+                fontSize: 11,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
       ],
     );
   }

@@ -87,13 +87,14 @@ class _AISettingsState extends ConsumerState<AISettings> {
         shrinkWrap: true,
         itemCount: prompts.length,
         itemBuilder: (context, index) {
+          final promptIdentifier = prompts[index]["identifier"] as AiPrompts;
           return SettingsTile.navigation(
             title: Text(prompts[index]["title"]),
             onPressed: (context) {
               SmartDialog.show(builder: (context) {
                 final controller = TextEditingController(
                   text: Prefs().getAiPrompt(
-                    AiPrompts.values[index],
+                    promptIdentifier,
                   ),
                 );
 
@@ -143,9 +144,9 @@ class _AISettingsState extends ConsumerState<AISettings> {
                   actions: [
                     TextButton(
                       onPressed: () {
-                        Prefs().deleteAiPrompt(AiPrompts.values[index]);
+                        Prefs().deleteAiPrompt(promptIdentifier);
                         controller.text = Prefs().getAiPrompt(
-                          AiPrompts.values[index],
+                          promptIdentifier,
                         );
                       },
                       child: Text(L10n.of(context).commonReset),
@@ -153,7 +154,7 @@ class _AISettingsState extends ConsumerState<AISettings> {
                     TextButton(
                       onPressed: () {
                         Prefs().saveAiPrompt(
-                          AiPrompts.values[index],
+                          promptIdentifier,
                           controller.text,
                         );
                       },

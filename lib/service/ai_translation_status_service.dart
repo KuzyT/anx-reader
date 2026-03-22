@@ -40,6 +40,20 @@ class AiRequestStats {
   });
 }
 
+class _TrackedRequest {
+  final int id;
+  final int itemsCount;
+  final String source;
+  final DateTime startedAt;
+
+  const _TrackedRequest({
+    required this.id,
+    required this.itemsCount,
+    required this.source,
+    required this.startedAt,
+  });
+}
+
 class AiTranslationStatusService extends ChangeNotifier {
   static final AiTranslationStatusService _instance =
       AiTranslationStatusService._internal();
@@ -60,24 +74,17 @@ class AiTranslationStatusService extends ChangeNotifier {
 
   Timer? _durationTimer;
   int _translationDurationSec = 0;
+  int _nextRequestId = 1;
+  final Map<int, _TrackedRequest> _activeRequests = {};
+  final List<int> _legacyRequestIds = [];
 
   AiTranslationState get state => _state;
   int get translatingCount => _translatingCount;
   int get translationDurationSec => _translationDurationSec;
+  int get activeRequestsCount => _activeRequests.length;
   List<AiLogEntry> get logs => List.unmodifiable(_logs);
   List<AiRequestStats> get requestStats => List.unmodifiable(_requestStats);
   String get lastErrorMessage => _lastErrorMessage;
-
-  void startTranslating(int count) {
-    _state = AiTranslationState.translating;
-    _translatingCount = count;
-    _stopTimer();
-    _durationTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
-      _translationDurationSec += 10;
-      notifyListeners();
-    });
-    notifyListeners();
-  }
 
   void _stopTimer() {
     _durationTimer?.cancel();
@@ -85,23 +92,115 @@ class AiTranslationStatusService extends ChangeNotifier {
     _translationDurationSec = 0;
   }
 
+  void _ensureTimer() {
+    if (_durationTimer != null) return;
+    _durationTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
+      _translationDurationSec += 10;
+      notifyListeners();
+    });
+  }
+
+  void _updateStateFromActiveRequests() {
+    if (_activeRequests.isEmpty) {
+      _state = AiTranslationState.idle;
+      _translatingCount = 0;
+      _stopTimer();
+    } else {
+      _state = AiTranslationState.translating;
+      _ensureTimer();
+    }
+  }
+
+  int beginRequest({
+    required int itemsCount,
+    required String source,
+    String? message,
+  }) {
+    final safeCount = itemsCount <= 0 ? 1 : itemsCount;
+    final id = _nextRequestId++;
+    _activeRequests[id] = _TrackedRequest(
+      id: id,
+      itemsCount: safeCount,
+      source: source,
+      startedAt: DateTime.now(),
+    );
+    _translatingCount += safeCount;
+    _state = AiTranslationState.translating;
+    _ensureTimer();
+
+    if (message != null && message.trim().isNotEmpty) {
+      addLog(message: message.trim());
+      return id;
+    }
+
+    notifyListeners();
+    return id;
+  }
+
+  void endRequest(
+    int requestId, {
+    bool isError = false,
+    String? message,
+    String? requestPayload,
+    String? responsePayload,
+    int? durationMs,
+    String modelName = '',
+  }) {
+    final tracked = _activeRequests.remove(requestId);
+    if (tracked == null) return;
+    _legacyRequestIds.remove(requestId);
+
+    _translatingCount -= tracked.itemsCount;
+    if (_translatingCount < 0) _translatingCount = 0;
+
+    final elapsedMs = durationMs ??
+        DateTime.now().difference(tracked.startedAt).inMilliseconds;
+    addRequestStat(
+      itemsCount: tracked.itemsCount,
+      isError: isError,
+      durationMs: elapsedMs > 0 ? elapsedMs : 0,
+      modelName: modelName.isEmpty ? tracked.source : modelName,
+    );
+
+    if (message != null && message.trim().isNotEmpty) {
+      _updateStateFromActiveRequests();
+      addLog(
+        message: message.trim(),
+        isError: isError,
+        requestPayload: requestPayload,
+        responsePayload: responsePayload,
+      );
+      return;
+    }
+
+    _updateStateFromActiveRequests();
+    notifyListeners();
+  }
+
+  // Backward-compatible API (used by existing AI provider code)
+  void startTranslating(int count) {
+    final id = beginRequest(itemsCount: count, source: 'ai_translate');
+    _legacyRequestIds.add(id);
+  }
+
   void setWaitingRateLimit() {
-    _stopTimer();
     _state = AiTranslationState.waitingRateLimit;
     notifyListeners();
   }
 
   void setError(String error) {
-    _stopTimer();
     _state = AiTranslationState.error;
     _lastErrorMessage = error;
     notifyListeners();
   }
 
   void setIdle() {
-    _stopTimer();
-    _state = AiTranslationState.idle;
-    _translatingCount = 0;
+    if (_legacyRequestIds.isNotEmpty) {
+      final id = _legacyRequestIds.removeAt(0);
+      endRequest(id);
+      return;
+    }
+    _updateStateFromActiveRequests();
     notifyListeners();
   }
 
@@ -119,7 +218,6 @@ class AiTranslationStatusService extends ChangeNotifier {
       responsePayload: responsePayload,
     ));
 
-    // Keep only last N logs to prevent memory leak
     if (_logs.length > _maxLogs) {
       _logs.removeAt(0);
     }

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:anx_reader/config/shared_preference_provider.dart';
 import 'package:anx_reader/dao/translation_cache.dart';
 import 'package:anx_reader/enums/convert_chinese_mode.dart';
+import 'package:anx_reader/enums/lang_list.dart';
 import 'package:anx_reader/enums/reading_info.dart';
 import 'package:anx_reader/enums/translation_mode.dart';
 import 'package:anx_reader/enums/translation_level.dart';
@@ -26,15 +27,283 @@ class ReadingMoreSettings extends StatefulWidget {
 enum ClearCacheScope { page, chapter, book }
 
 class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
+  static const String _wordWiseCacheLevel = 'word_wise';
+  static const String _wordWiseWordCacheLevel = 'word_wise_words';
+  static const String _useGlobalLangCode = '__global__';
+  static final RegExp _wordTokenPattern = RegExp(
+    r"[A-Za-zÀ-ÖØ-öø-ÿĀ-žЀ-ӿ]+(?:['’-][A-Za-zÀ-ÖØ-öø-ÿĀ-žЀ-ӿ]+)*",
+  );
+  static final RegExp _japaneseKanaPattern = RegExp(r'[\u3040-\u30ff]');
+  static final RegExp _hangulPattern = RegExp(r'[\uac00-\ud7af]');
+  static final RegExp _cjkPattern = RegExp(r'[\u4e00-\u9fff]');
+  static final RegExp _traditionalHintPattern =
+      RegExp(r'[體學國書門開語讀麼這為過還會點對裡畫萬與關時後來]');
+  static final RegExp _cyrillicPattern = RegExp(r'[\u0400-\u04FF]');
+  static final RegExp _ukrainianHintPattern = RegExp(r'[іїєґ]');
+  static final RegExp _greekPattern = RegExp(r'[\u0370-\u03ff]');
+  static final RegExp _arabicPattern = RegExp(r'[\u0600-\u06ff]');
+  static final RegExp _devanagariPattern = RegExp(r'[\u0900-\u097f]');
+  static final RegExp _tamilPattern = RegExp(r'[\u0b80-\u0bff]');
+  static final RegExp _teluguPattern = RegExp(r'[\u0c00-\u0c7f]');
+  static final RegExp _thaiPattern = RegExp(r'[\u0e00-\u0e7f]');
+
+  static const Map<LangListEnum, Set<String>> _latinStopWords = {
+    LangListEnum.english: {
+      'the',
+      'and',
+      'of',
+      'to',
+      'in',
+      'that',
+      'is',
+      'for',
+      'with',
+      'you',
+      'was',
+      'are',
+    },
+    LangListEnum.spanish: {
+      'el',
+      'la',
+      'de',
+      'que',
+      'y',
+      'en',
+      'los',
+      'las',
+      'un',
+      'una',
+      'para',
+      'con',
+    },
+    LangListEnum.french: {
+      'le',
+      'la',
+      'les',
+      'de',
+      'des',
+      'et',
+      'en',
+      'un',
+      'une',
+      'pour',
+      'avec',
+      'que',
+    },
+    LangListEnum.german: {
+      'der',
+      'die',
+      'das',
+      'und',
+      'ist',
+      'ein',
+      'eine',
+      'mit',
+      'nicht',
+      'den',
+      'von',
+      'zu',
+    },
+    LangListEnum.italian: {
+      'il',
+      'la',
+      'di',
+      'e',
+      'che',
+      'un',
+      'una',
+      'per',
+      'con',
+      'non',
+      'del',
+      'della',
+    },
+    LangListEnum.portuguese: {
+      'de',
+      'que',
+      'e',
+      'o',
+      'a',
+      'do',
+      'da',
+      'em',
+      'um',
+      'uma',
+      'com',
+      'para',
+      'não',
+      'nao',
+    },
+  };
+
+  static const Set<String> _ptBrMarkers = {
+    'você',
+    'vocês',
+    'ônibus',
+    'trem',
+    'celular',
+    'legal',
+    'cara',
+  };
+
+  static const Set<String> _ptPtMarkers = {
+    'tu',
+    'autocarro',
+    'comboio',
+    'telemóvel',
+    'telemovel',
+    'facto',
+    'fixe',
+    'rapariga',
+  };
+
   final isReading =
       epubPlayerKey.currentState != null && epubPlayerKey.currentState!.mounted;
+
+  List<String> _extractWordCacheKeys(List<String> texts) {
+    final keys = <String>{};
+    for (final text in texts) {
+      for (final match in _wordTokenPattern.allMatches(text)) {
+        final token = (match.group(0) ?? '').trim().toLowerCase();
+        if (token.isNotEmpty) {
+          keys.add(token);
+        }
+      }
+    }
+    return keys.toList();
+  }
+
+  int _countWordHits(List<String> words, Set<String> markers) {
+    var score = 0;
+    for (final word in words) {
+      if (markers.contains(word)) score++;
+    }
+    return score;
+  }
+
+  LangListEnum _resolvePortugueseVariant(String lowerText, List<String> words) {
+    var brScore = _countWordHits(words, _ptBrMarkers);
+    var ptScore = _countWordHits(words, _ptPtMarkers);
+
+    if (lowerText.contains('a gente')) {
+      brScore += 2;
+    }
+    if (lowerText.contains('vocês') || lowerText.contains('voces')) {
+      brScore += 1;
+    }
+    if (lowerText.contains('vocês')) {
+      ptScore += 1;
+    }
+
+    if (brScore == 0 && ptScore == 0) {
+      return LangListEnum.portuguese;
+    }
+    if (brScore >= ptScore + 1) {
+      return LangListEnum.portugueseBrazil;
+    }
+    if (ptScore >= brScore + 1) {
+      return LangListEnum.portuguesePortugal;
+    }
+    return LangListEnum.portuguese;
+  }
+
+  LangListEnum? _detectSourceLanguageFromText(String rawText) {
+    final text = rawText.trim();
+    if (text.length < 24) return null;
+
+    if (_japaneseKanaPattern.hasMatch(text)) return LangListEnum.japanese;
+    if (_hangulPattern.hasMatch(text)) return LangListEnum.korean;
+    if (_greekPattern.hasMatch(text)) return LangListEnum.greek;
+    if (_arabicPattern.hasMatch(text)) return LangListEnum.arabic;
+    if (_devanagariPattern.hasMatch(text)) return LangListEnum.hindi;
+    if (_tamilPattern.hasMatch(text)) return LangListEnum.tamil;
+    if (_teluguPattern.hasMatch(text)) return LangListEnum.telugu;
+    if (_thaiPattern.hasMatch(text)) return LangListEnum.thai;
+
+    if (_cyrillicPattern.hasMatch(text)) {
+      final lowerCyr = text.toLowerCase();
+      if (_ukrainianHintPattern.hasMatch(lowerCyr)) {
+        return LangListEnum.ukrainian;
+      }
+      return LangListEnum.russian;
+    }
+
+    if (_cjkPattern.hasMatch(text)) {
+      if (_traditionalHintPattern.hasMatch(text)) {
+        return LangListEnum.traditionalChinese;
+      }
+      return LangListEnum.simplifiedChinese;
+    }
+
+    final lower = text.toLowerCase();
+    final words = _wordTokenPattern
+        .allMatches(lower)
+        .map((m) => (m.group(0) ?? '').trim().toLowerCase())
+        .where((w) => w.length >= 2)
+        .toList();
+    if (words.length < 6) return null;
+
+    final scores = <LangListEnum, int>{};
+    for (final entry in _latinStopWords.entries) {
+      scores[entry.key] = _countWordHits(words, entry.value);
+    }
+
+    LangListEnum? bestLang;
+    var bestScore = 0;
+    var secondScore = 0;
+    for (final entry in scores.entries) {
+      final score = entry.value;
+      if (score > bestScore) {
+        secondScore = bestScore;
+        bestScore = score;
+        bestLang = entry.key;
+      } else if (score > secondScore) {
+        secondScore = score;
+      }
+    }
+
+    if (bestLang == null || bestScore < 2) return null;
+    if (bestScore == secondScore) return null;
+
+    if (bestLang == LangListEnum.portuguese) {
+      return _resolvePortugueseVariant(lower, words);
+    }
+    return bestLang;
+  }
+
+  Future<LangListEnum?> _detectSourceLanguageForCurrentBook() async {
+    final text = await epubPlayerKey.currentState?.theChapterContent() ?? '';
+    if (text.trim().isEmpty) return null;
+    return _detectSourceLanguageFromText(text);
+  }
+
+  Future<void> _refreshInterlinearView() async {
+    await epubPlayerKey.currentState?.webViewController.evaluateJavascript(
+      source: '''
+(() => {
+  const reader = window.reader;
+  const translator = reader && reader.view && reader.view.translator;
+  if (translator && typeof translator.retranslateAll === 'function') {
+    translator.retranslateAll();
+  }
+})()
+''',
+    );
+  }
+
+  Future<int> _clearBookTranslationCacheAndRefresh(int bookId) async {
+    final count = await translationCacheDao.clearForBook(bookId);
+    await _refreshInterlinearView();
+    return count;
+  }
 
   Future<void> _showClearCacheDialog() async {
     final bookId = epubPlayerKey.currentState!.widget.book.id;
     final currentLevelEnum = Prefs().translationLevel;
     final isWordLevel = currentLevelEnum != TranslationLevelEnum.full;
-    final currentLevelDbKey = isWordLevel ? 'word_wise' : 'full';
-    final displayLevelName = isWordLevel ? 'Word-by-word' : currentLevelEnum.displayName;
+    final currentLevelDbKey = isWordLevel ? _wordWiseCacheLevel : 'full';
+    final displayLevelName =
+        isWordLevel ? 'Word-by-word' : currentLevelEnum.displayName;
 
     ClearCacheScope scope = ClearCacheScope.page;
     bool currentLevelOnly = true;
@@ -50,19 +319,22 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   RadioListTile<ClearCacheScope>(
-                    title: Text(L10n.of(context).translationClearCacheCurrentPage),
+                    title:
+                        Text(L10n.of(context).translationClearCacheCurrentPage),
                     value: ClearCacheScope.page,
                     groupValue: scope,
                     onChanged: (v) => setDialogState(() => scope = v!),
                   ),
                   RadioListTile<ClearCacheScope>(
-                    title: Text(L10n.of(context).translationClearCacheCurrentChapter),
+                    title: Text(
+                        L10n.of(context).translationClearCacheCurrentChapter),
                     value: ClearCacheScope.chapter,
                     groupValue: scope,
                     onChanged: (v) => setDialogState(() => scope = v!),
                   ),
                   RadioListTile<ClearCacheScope>(
-                    title: Text(L10n.of(context).translationClearCacheWholeBook),
+                    title:
+                        Text(L10n.of(context).translationClearCacheWholeBook),
                     value: ClearCacheScope.book,
                     groupValue: scope,
                     onChanged: (v) => setDialogState(() => scope = v!),
@@ -147,7 +419,8 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
       if (originals == null || originals.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(L10n.of(context).translationClearCacheResolveTextError),
+            content:
+                Text(L10n.of(context).translationClearCacheResolveTextError),
             backgroundColor: Colors.red,
           ));
         }
@@ -155,25 +428,41 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
       }
     }
 
-    final count = await translationCacheDao.clearSpecific(bookId,
+    var totalCount = await translationCacheDao.clearSpecific(bookId,
         level: level, originals: originals);
 
+    final shouldClearWordCache = level == _wordWiseCacheLevel ||
+        (level == null && scope != ClearCacheScope.book);
+    if (shouldClearWordCache) {
+      if (scope == ClearCacheScope.book) {
+        // For whole-book "current level only" in word-wise mode:
+        // clear both sentence cache and dedicated per-word cache.
+        final extra = await translationCacheDao.clearSpecific(
+          bookId,
+          level: _wordWiseWordCacheLevel,
+        );
+        totalCount += extra;
+      } else {
+        final sourceTexts = originals ?? const <String>[];
+        final wordKeys = _extractWordCacheKeys(sourceTexts);
+        if (wordKeys.isNotEmpty) {
+          final extra = await translationCacheDao.clearSpecific(
+            bookId,
+            level: _wordWiseWordCacheLevel,
+            originals: wordKeys,
+          );
+          totalCount += extra;
+        }
+      }
+    }
+
     // Refresh UI: trigger re-translation observation in WebView
-    await epubPlayerKey.currentState?.webViewController?.evaluateJavascript(
-      source: '''
-(() => {
-  const reader = window.reader;
-  const translator = reader && reader.view && reader.view.translator;
-  if (translator && typeof translator.retranslateAll === 'function') {
-    translator.retranslateAll();
-  }
-})()
-''',
-    );
+    await _refreshInterlinearView();
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(L10n.of(context).translationClearCacheSuccess(count)),
+        content:
+            Text(L10n.of(context).translationClearCacheSuccess(totalCount)),
         duration: const Duration(seconds: 2),
       ));
     }
@@ -1051,7 +1340,9 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
                   ...['0', 'a1', 'a2', 'b1', 'b2', 'c1', 'c2'].map((level) {
                     final colors = Prefs().translationLevelColors;
                     final hexString = colors[level] ?? '#000000';
-                    final colorInt = int.tryParse(hexString.replaceFirst('#', '0xff')) ?? 0xff000000;
+                    final colorInt =
+                        int.tryParse(hexString.replaceFirst('#', '0xff')) ??
+                            0xff000000;
                     final color = Color(colorInt);
 
                     return GestureDetector(
@@ -1065,13 +1356,17 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
                                 pickerColor: color,
                                 onColorChanged: (newColor) {
                                   setState(() {
-                                    final newHexStr = '#${newColor.value.toRadixString(16).substring(2).toUpperCase()}';
-                                    final newColors = Map<String, String>.from(Prefs().translationLevelColors);
+                                    final newHexStr =
+                                        '#${newColor.value.toRadixString(16).substring(2).toUpperCase()}';
+                                    final newColors = Map<String, String>.from(
+                                        Prefs().translationLevelColors);
                                     newColors[level] = newHexStr;
                                     Prefs().translationLevelColors = newColors;
-                                    epubPlayerKey.currentState?.setTranslationColors(
+                                    epubPlayerKey.currentState
+                                        ?.setTranslationColors(
                                       Prefs().translationColorEnabled,
-                                      jsonEncode(Prefs().translationLevelColors),
+                                      jsonEncode(
+                                          Prefs().translationLevelColors),
                                     );
                                   });
                                 },
@@ -1134,6 +1429,235 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
       );
     }
 
+    Widget clearTranslationCacheButton() {
+      if (epubPlayerKey.currentState == null) return const SizedBox.shrink();
+
+      return Row(
+        children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () => _showClearCacheDialog(),
+              icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+              label: Text(L10n.of(context).translationClearCacheTitle),
+            ),
+          ),
+        ],
+      );
+    }
+
+    Future<void> showInterlinearSettingsDialog() async {
+      final playerState = epubPlayerKey.currentState;
+      if (playerState == null) return;
+
+      final bookId = playerState.widget.book.id;
+      var selectedSourceCode =
+          Prefs().getBookInterlinearSourceLangOverride(bookId)?.code ??
+              _useGlobalLangCode;
+      var isDetecting = false;
+      var globalAiRefineEnabled = Prefs().aiRefineWordLevelsGlobal;
+      var bookAiRefineMode = Prefs().getBookAiRefineWordLevelsMode(bookId);
+
+      await showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        builder: (dialogContext) {
+          return StatefulBuilder(
+            builder: (dialogContext, setDialogState) {
+              final globalFrom =
+                  Prefs().fullTextTranslateFrom.getNative(context);
+
+              return SafeArea(
+                child: FractionallySizedBox(
+                  heightFactor: 0.9,
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(18),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Interlinear Translation Settings',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          'Source language for this book',
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                        const SizedBox(height: 6),
+                        DropdownButton<String>(
+                          isExpanded: true,
+                          value: selectedSourceCode,
+                          underline: Container(),
+                          dropdownColor:
+                              Theme.of(context).colorScheme.surfaceContainer,
+                          borderRadius: BorderRadius.circular(8),
+                          items: [
+                            DropdownMenuItem(
+                              value: _useGlobalLangCode,
+                              child: Text('Use global ($globalFrom)'),
+                            ),
+                            ...LangListEnum.values.map((lang) {
+                              return DropdownMenuItem(
+                                value: lang.code,
+                                child: Text(lang.getNative(context)),
+                              );
+                            }),
+                          ],
+                          onChanged: (nextValue) async {
+                            if (nextValue == null ||
+                                nextValue == selectedSourceCode) {
+                              return;
+                            }
+
+                            setDialogState(
+                                () => selectedSourceCode = nextValue);
+                            if (nextValue == _useGlobalLangCode) {
+                              Prefs().setBookInterlinearSourceLangOverride(
+                                  bookId, null);
+                            } else {
+                              Prefs().setBookInterlinearSourceLangOverride(
+                                  bookId, getLang(nextValue));
+                            }
+
+                            final cleared =
+                                await _clearBookTranslationCacheAndRefresh(
+                                    bookId);
+                            if (!mounted || !dialogContext.mounted) return;
+
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              content: Text(L10n.of(context)
+                                  .translationClearCacheSuccess(cleared)),
+                              duration: const Duration(seconds: 2),
+                            ));
+                            setState(() {});
+                          },
+                        ),
+                        const SizedBox(height: 6),
+                        FilledButton.tonalIcon(
+                          onPressed: isDetecting
+                              ? null
+                              : () async {
+                                  setDialogState(() => isDetecting = true);
+                                  final detected =
+                                      await _detectSourceLanguageForCurrentBook();
+                                  if (!mounted || !dialogContext.mounted) {
+                                    return;
+                                  }
+
+                                  setDialogState(() => isDetecting = false);
+                                  if (detected == null) {
+                                    ScaffoldMessenger.of(context)
+                                        .showSnackBar(const SnackBar(
+                                      content: Text(
+                                          'Could not detect source language from the current chapter.'),
+                                      duration: Duration(seconds: 2),
+                                    ));
+                                    return;
+                                  }
+
+                                  Prefs().setBookInterlinearSourceLangOverride(
+                                      bookId, detected);
+                                  setDialogState(
+                                      () => selectedSourceCode = detected.code);
+
+                                  final cleared =
+                                      await _clearBookTranslationCacheAndRefresh(
+                                          bookId);
+                                  if (!mounted || !dialogContext.mounted) {
+                                    return;
+                                  }
+
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                          'Detected: ${detected.getNative(context)}. ${L10n.of(context).translationClearCacheSuccess(cleared)}'),
+                                      duration: const Duration(seconds: 2),
+                                    ),
+                                  );
+                                  setState(() {});
+                                },
+                          icon: isDetecting
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.auto_awesome),
+                          label: Text(isDetecting
+                              ? 'Detecting...'
+                              : 'Auto detect from current chapter'),
+                        ),
+                        const SizedBox(height: 8),
+                        const Divider(height: 20),
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text(
+                              'AI refine levels for non-AI translation (global)'),
+                          value: globalAiRefineEnabled,
+                          onChanged: (value) {
+                            setDialogState(() => globalAiRefineEnabled = value);
+                            Prefs().aiRefineWordLevelsGlobal = value;
+                            setState(() {});
+                          },
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Per-book override',
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                        const SizedBox(height: 6),
+                        DropdownButton<String>(
+                          isExpanded: true,
+                          value: bookAiRefineMode,
+                          underline: Container(),
+                          dropdownColor:
+                              Theme.of(context).colorScheme.surfaceContainer,
+                          borderRadius: BorderRadius.circular(8),
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'inherit',
+                              child: Text('Use global'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'enabled',
+                              child: Text('Only for this book (enabled)'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'disabled',
+                              child: Text('Disable for this book'),
+                            ),
+                          ],
+                          onChanged: (nextValue) {
+                            if (nextValue == null) return;
+                            setDialogState(() => bookAiRefineMode = nextValue);
+                            Prefs()
+                                .setBookAiRefineWordLevelsMode(bookId, nextValue);
+                            setState(() {});
+                          },
+                        ),
+                        const SizedBox(height: 8),
+                        const Divider(height: 20),
+                        translationLevel(),
+                        translationColorsWidget(),
+                        showAiTranslationStatusWidget(),
+                        aiBatchSizeWidget(),
+                        aiWorkersWidget(),
+                        const SizedBox(height: 8),
+                        clearTranslationCacheButton(),
+                        const SizedBox(height: 8),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      );
+    }
+
     return Container(
       padding: const EdgeInsets.all(18.0),
       child: Column(
@@ -1146,24 +1670,23 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
               Prefs().getBookTranslationMode(
                       epubPlayerKey.currentState!.widget.book.id) ==
                   TranslationModeEnum.interlinear) ...[
-            translationLevel(),
-            translationColorsWidget(),
-          ],
-          showAiTranslationStatusWidget(),
-          aiBatchSizeWidget(),
-          aiWorkersWidget(),
-          if (epubPlayerKey.currentState != null) ...[
             const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _showClearCacheDialog(),
-                    icon: const Icon(Icons.delete_sweep_outlined, size: 18),
-                    label: Text(L10n.of(context).translationClearCacheTitle),
-                  ),
+            Row(children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => showInterlinearSettingsDialog(),
+                  icon: const Icon(Icons.tune),
+                  label: const Text('Interlinear settings'),
                 ),
-              ],
+              ),
+            ]),
+            const SizedBox(height: 4),
+            Text(
+              'Level, colors, source language, workers, cache',
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(color: Colors.grey),
             ),
           ],
           columnCount(),

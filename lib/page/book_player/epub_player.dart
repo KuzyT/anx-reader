@@ -8,6 +8,7 @@ import 'package:anx_reader/dao/book_note.dart';
 import 'package:anx_reader/dao/translation_cache.dart';
 import 'package:anx_reader/enums/page_turn_mode.dart';
 import 'package:anx_reader/enums/reading_info.dart';
+import 'package:anx_reader/enums/lang_list.dart';
 import 'package:anx_reader/enums/translation_mode.dart';
 import 'package:anx_reader/enums/translation_level.dart';
 import 'package:anx_reader/enums/writing_mode.dart';
@@ -29,6 +30,9 @@ import 'package:anx_reader/providers/book_toc.dart';
 import 'package:anx_reader/providers/bookmark.dart';
 import 'package:anx_reader/providers/chapter_content_bridge.dart';
 import 'package:anx_reader/providers/current_reading.dart';
+import 'package:anx_reader/service/ai/index.dart';
+import 'package:anx_reader/service/ai/prompt_generate.dart';
+import 'package:anx_reader/service/translate/index.dart';
 import 'package:anx_reader/service/book_player/book_player_server.dart';
 import 'package:anx_reader/service/ai_translation_status_service.dart';
 import 'package:anx_reader/providers/toc_search.dart';
@@ -81,6 +85,41 @@ class EpubPlayer extends ConsumerStatefulWidget {
   ConsumerState<EpubPlayer> createState() => EpubPlayerState();
 }
 
+class _WordSegment {
+  final String rawText;
+  final String? normalizedWord;
+
+  const _WordSegment._(this.rawText, this.normalizedWord);
+
+  const _WordSegment.text(String value) : this._(value, null);
+  const _WordSegment.word(String value, String normalized)
+      : this._(value, normalized);
+
+  bool get isWord => normalizedWord != null;
+}
+
+class _WordWiseNonAiResult {
+  final Map<String, String> sentenceTranslations;
+  final Map<String, _WordCacheEntry> wordCacheUpdates;
+  final Set<String> wordsNeedingLevelRefine;
+
+  const _WordWiseNonAiResult({
+    required this.sentenceTranslations,
+    required this.wordCacheUpdates,
+    required this.wordsNeedingLevelRefine,
+  });
+}
+
+class _WordCacheEntry {
+  final String translation;
+  final String? level;
+
+  const _WordCacheEntry({
+    required this.translation,
+    required this.level,
+  });
+}
+
 class EpubPlayerState extends ConsumerState<EpubPlayer>
     with TickerProviderStateMixin {
   late InAppWebViewController webViewController;
@@ -117,11 +156,53 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
   static int _activeTranslationWorkers = 0;
   static int get _maxTranslationWorkers => Prefs().aiTranslateWorkers;
   static final _translationWaitQueue = <Completer<void>>[];
+  static const String _wordWiseCacheLevel = 'word_wise';
+  static const String _wordWiseWordCacheLevel = 'word_wise_words';
+  static final RegExp _wordTokenPattern = RegExp(
+    r"[A-Za-zÀ-ÖØ-öø-ÿĀ-žЀ-ӿ]+(?:['’-][A-Za-zÀ-ÖØ-öø-ÿĀ-žЀ-ӿ]+)*",
+  );
+  static final RegExp _wordHasLetterPattern =
+      RegExp(r'[A-Za-zÀ-ÖØ-öø-ÿĀ-žЀ-ӿ]');
+  static const Set<String> _nonAiSkippedWords = {
+    'a',
+    'an',
+    'the',
+    'o',
+    'os',
+    'as',
+    'um',
+    'uma',
+    'uns',
+    'umas',
+  };
+  static const Set<String> _validCefrLevels = {
+    '0',
+    'a1',
+    'a2',
+    'b1',
+    'b2',
+    'c1',
+    'c2',
+  };
+  static final Set<int> _activeWordLevelRefineBooks = <int>{};
+  static final Map<int, Set<String>> _pendingWordLevelRefineWords = {};
 
   void _aiDebugLog(String message) {
     if (EnvVar.enableAiConsoleLogs) {
       debugPrint(message);
     }
+  }
+
+  String _clipStatusPayload(String payload, {int maxLength = 4000}) {
+    if (payload.length <= maxLength) return payload;
+    final kept = payload.substring(0, maxLength);
+    return '$kept\n... [truncated ${payload.length - maxLength} chars]';
+  }
+
+  LangListEnum _resolveBookSourceLanguage([int? bookId]) {
+    final targetBookId = bookId ?? widget.book.id;
+    final override = Prefs().getBookInterlinearSourceLangOverride(targetBookId);
+    return override ?? Prefs().fullTextTranslateFrom;
   }
 
   // to know anytime if we are on top of navigation stack
@@ -193,7 +274,8 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
     setAiBatchSize(Prefs().aiBatchSize);
     setAiWorkers(Prefs().aiTranslateWorkers);
     setTranslationMode(Prefs().getBookTranslationMode(widget.book.id));
-    setTranslationColors(Prefs().translationColorEnabled, jsonEncode(Prefs().translationLevelColors));
+    setTranslationColors(Prefs().translationColorEnabled,
+        jsonEncode(Prefs().translationLevelColors));
   }
 
   Future<void> goToPercentage(double value) async {
@@ -658,6 +740,747 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
     }
   }
 
+  String _normalizeWordForCache(String word) {
+    return word
+        .trim()
+        .replaceAll('’', "'")
+        .replaceAll('`', "'")
+        .toLowerCase();
+  }
+
+  _WordCacheEntry _decodeWordCacheEntry(String rawValue) {
+    final trimmed = rawValue.trim();
+    if (trimmed.isEmpty) {
+      return const _WordCacheEntry(translation: '', level: null);
+    }
+
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      try {
+        final decoded = jsonDecode(trimmed);
+        if (decoded is Map) {
+          final translation = (decoded['t'] ?? '').toString();
+          final rawLevel = decoded['l']?.toString();
+          final normalizedLevel = rawLevel == null
+              ? null
+              : _normalizeCefrLevel(rawLevel, allowNull: true);
+          return _WordCacheEntry(
+            translation: translation,
+            level: normalizedLevel,
+          );
+        }
+      } catch (_) {}
+    }
+
+    // Backward compatibility: legacy cache stored only translation string.
+    return _WordCacheEntry(translation: trimmed, level: null);
+  }
+
+  String _encodeWordCacheEntry(_WordCacheEntry entry) {
+    return jsonEncode({
+      't': entry.translation,
+      'l': entry.level,
+    });
+  }
+
+  Map<String, String> _encodeWordCacheUpdates(
+      Map<String, _WordCacheEntry> entries) {
+    final encoded = <String, String>{};
+    for (final entry in entries.entries) {
+      encoded[entry.key] = _encodeWordCacheEntry(entry.value);
+    }
+    return encoded;
+  }
+
+  bool _shouldTranslateWord(String normalizedWord) {
+    if (normalizedWord.isEmpty) return false;
+    if (_nonAiSkippedWords.contains(normalizedWord)) return false;
+    return _wordHasLetterPattern.hasMatch(normalizedWord);
+  }
+
+  List<_WordSegment> _tokenizeWordSegments(String text) {
+    if (text.isEmpty) return const [];
+
+    final segments = <_WordSegment>[];
+    var lastEnd = 0;
+
+    for (final match in _wordTokenPattern.allMatches(text)) {
+      if (match.start > lastEnd) {
+        segments.add(_WordSegment.text(text.substring(lastEnd, match.start)));
+      }
+
+      final raw = match.group(0) ?? '';
+      final normalized = _normalizeWordForCache(raw);
+      if (_shouldTranslateWord(normalized)) {
+        segments.add(_WordSegment.word(raw, normalized));
+      } else {
+        segments.add(_WordSegment.text(raw));
+      }
+      lastEnd = match.end;
+    }
+
+    if (lastEnd < text.length) {
+      segments.add(_WordSegment.text(text.substring(lastEnd)));
+    }
+
+    return segments;
+  }
+
+  String _escapeMarkerValue(String value) {
+    return value.replaceAll('[', '(').replaceAll(']', ')').replaceAll('|', '/');
+  }
+
+  Map<String, _WordCacheEntry> _extractWordCacheEntriesFromMarkerText(
+      String markedText) {
+    final result = <String, _WordCacheEntry>{};
+    if (markedText.isEmpty) return result;
+
+    final markerPattern =
+        RegExp(r'\[([^\[\]\|]+)\|([^\[\]\|]*)(?:\|([^\[\]\|]*))?\]');
+    for (final match in markerPattern.allMatches(markedText)) {
+      final originalWord = (match.group(1) ?? '').trim();
+      final translatedWord = (match.group(2) ?? '').trim();
+      final levelRaw = (match.group(3) ?? '').trim();
+      final normalizedWord = _normalizeWordForCache(originalWord);
+      if (normalizedWord.isEmpty || translatedWord.isEmpty) continue;
+
+      final normalizedLevel =
+          _normalizeCefrLevel(levelRaw, allowNull: true);
+      result[normalizedWord] = _WordCacheEntry(
+        translation: translatedWord,
+        level: normalizedLevel,
+      );
+    }
+    return result;
+  }
+
+  int _firstCasedLetterIndex(String text) {
+    for (var i = 0; i < text.length; i++) {
+      final ch = text[i];
+      if (ch.toLowerCase() != ch.toUpperCase()) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  String _alignTranslationCaseWithSource(String source, String translation) {
+    if (source.isEmpty || translation.isEmpty) return translation;
+
+    final sourceIdx = _firstCasedLetterIndex(source);
+    final translationIdx = _firstCasedLetterIndex(translation);
+    if (sourceIdx < 0 || translationIdx < 0) return translation;
+
+    final srcChar = source[sourceIdx];
+    final transChar = translation[translationIdx];
+
+    final sourceIsUpper = srcChar == srcChar.toUpperCase();
+    final sourceIsLower = srcChar == srcChar.toLowerCase();
+    if (!sourceIsUpper && !sourceIsLower) return translation;
+
+    final desiredChar =
+        sourceIsUpper ? transChar.toUpperCase() : transChar.toLowerCase();
+    if (desiredChar == transChar) return translation;
+
+    return translation.substring(0, translationIdx) +
+        desiredChar +
+        translation.substring(translationIdx + 1);
+  }
+
+  String? _normalizeCefrLevel(String raw, {bool allowNull = false}) {
+    final normalized = raw.trim().toLowerCase();
+    if (allowNull &&
+        (normalized.isEmpty ||
+            normalized == 'null' ||
+            normalized == 'none' ||
+            normalized == '?')) {
+      return null;
+    }
+    return _validCefrLevels.contains(normalized) ? normalized : null;
+  }
+
+  bool _isAiWordLevelRefineEnabledForBook([int? bookId]) {
+    return Prefs()
+        .isAiRefineWordLevelsEnabledForBook(bookId ?? widget.book.id);
+  }
+
+  void _scheduleAiWordLevelRefinement(Set<String> words) {
+    if (words.isEmpty) return;
+    if (!_isAiWordLevelRefineEnabledForBook()) {
+      AiTranslationStatusService().addLog(
+        message:
+            'AI refine skipped: disabled for current book (${widget.book.id})',
+      );
+      return;
+    }
+
+    final normalizedWords = words
+        .map(_normalizeWordForCache)
+        .where((w) => w.isNotEmpty)
+        .toSet();
+    if (normalizedWords.isEmpty) return;
+    AiTranslationStatusService().addLog(
+      message:
+          'AI refine scheduled: ${normalizedWords.length} words (book ${widget.book.id})',
+    );
+
+    final bucket = _pendingWordLevelRefineWords
+        .putIfAbsent(widget.book.id, () => <String>{});
+    bucket.addAll(normalizedWords);
+
+    if (_activeWordLevelRefineBooks.contains(widget.book.id)) {
+      return;
+    }
+
+    _activeWordLevelRefineBooks.add(widget.book.id);
+    unawaited(_runAiWordLevelRefinementQueue(widget.book.id));
+  }
+
+  Future<void> _queueRefineForVisibleTextsFromWordCache(
+    List<String> sourceTexts, {
+    List<String> markedTexts = const <String>[],
+  }) async {
+    if (sourceTexts.isEmpty) return;
+    if (!_isAiWordLevelRefineEnabledForBook()) return;
+
+    final candidateWords = <String>{};
+    for (final text in sourceTexts) {
+      final segments = _tokenizeWordSegments(text);
+      for (final segment in segments) {
+        if (segment.isWord && segment.normalizedWord != null) {
+          candidateWords.add(segment.normalizedWord!);
+        }
+      }
+    }
+    if (candidateWords.isEmpty) return;
+
+    final raw = await translationCacheDao.getTranslations(
+      widget.book.id,
+      _wordWiseWordCacheLevel,
+      candidateWords.toList(growable: false),
+    );
+    final decodedCache = <String, _WordCacheEntry>{};
+    for (final entry in raw.entries) {
+      final word = _normalizeWordForCache(entry.key);
+      if (word.isEmpty) continue;
+      decodedCache[word] = _decodeWordCacheEntry(entry.value);
+    }
+
+    final missingInWordCache = candidateWords
+        .where((word) => !decodedCache.containsKey(word))
+        .toSet();
+
+    if (missingInWordCache.isNotEmpty && markedTexts.isNotEmpty) {
+      final seeded = <String, _WordCacheEntry>{};
+      for (final marked in markedTexts) {
+        final entries = _extractWordCacheEntriesFromMarkerText(marked);
+        for (final entry in entries.entries) {
+          if (missingInWordCache.contains(entry.key)) {
+            seeded[entry.key] = entry.value;
+          }
+        }
+      }
+
+      if (seeded.isNotEmpty) {
+        await translationCacheDao.insertTranslations(
+          widget.book.id,
+          _wordWiseWordCacheLevel,
+          _encodeWordCacheUpdates(seeded),
+        );
+        decodedCache.addAll(seeded);
+        AiTranslationStatusService().addLog(
+          message:
+              'AI refine seeded word cache from sentence markers: ${seeded.length} words',
+        );
+      }
+    }
+
+    final needsRefine = <String>{};
+    for (final entry in decodedCache.entries) {
+      final word = entry.key;
+      final decoded = entry.value;
+      final hasTranslation = decoded.translation.trim().isNotEmpty;
+      final hasLevel = (decoded.level ?? '').trim().isNotEmpty;
+      if (hasTranslation && !hasLevel) {
+        needsRefine.add(word);
+      }
+    }
+
+    if (needsRefine.isEmpty) return;
+    AiTranslationStatusService().addLog(
+      message:
+          'AI refine queued from cache: ${needsRefine.length} words (visible page/chunk)',
+    );
+    _scheduleAiWordLevelRefinement(needsRefine);
+  }
+
+  Future<void> _runAiWordLevelRefinementQueue(int bookId) async {
+    var updatedAny = false;
+    try {
+      while (true) {
+        final words = _pendingWordLevelRefineWords.remove(bookId) ?? <String>{};
+        if (words.isEmpty) break;
+        if (!mounted) break;
+        AiTranslationStatusService().addLog(
+          message:
+              'AI refine queue: processing ${words.length} words (book $bookId)',
+        );
+
+        final updated =
+            await _refineWordLevelsOnce(bookId, words.toList(growable: false));
+        updatedAny = updatedAny || updated;
+      }
+
+      if (updatedAny && mounted) {
+        AiTranslationStatusService().addLog(
+          message:
+              'AI refine applied: word levels updated, refreshing interlinear cache',
+        );
+        await translationCacheDao.clearSpecific(bookId, level: _wordWiseCacheLevel);
+        await webViewController.evaluateJavascript(source: '''
+(() => {
+  const reader = window.reader;
+  const translator = reader && reader.view && reader.view.translator;
+  if (translator && typeof translator.retranslateAll === 'function') {
+    translator.retranslateAll();
+  }
+})()
+''');
+      }
+    } catch (e) {
+      _aiDebugLog('⚠️ [AI LEVEL REFINE QUEUE ERROR] $e');
+    } finally {
+      _activeWordLevelRefineBooks.remove(bookId);
+    }
+  }
+
+  Future<bool> _refineWordLevelsOnce(int bookId, List<String> words) async {
+    if (words.isEmpty) return false;
+    if (!_isAiWordLevelRefineEnabledForBook(bookId)) {
+      AiTranslationStatusService().addLog(
+        message: 'AI refine skipped in worker: disabled for book $bookId',
+      );
+      return false;
+    }
+
+    final rawCache = await translationCacheDao.getTranslations(
+      bookId,
+      _wordWiseWordCacheLevel,
+      words,
+    );
+
+    final needLevels = <String>[];
+    final decoded = <String, _WordCacheEntry>{};
+    for (final entry in rawCache.entries) {
+      final word = _normalizeWordForCache(entry.key);
+      final cacheEntry = _decodeWordCacheEntry(entry.value);
+      decoded[word] = cacheEntry;
+      if (cacheEntry.translation.trim().isNotEmpty &&
+          (cacheEntry.level == null || cacheEntry.level!.isEmpty)) {
+        needLevels.add(word);
+      }
+    }
+
+    if (needLevels.isEmpty) {
+      AiTranslationStatusService().addLog(
+        message:
+            'AI refine worker: no words with translation+missing level in current batch',
+      );
+      return false;
+    }
+    AiTranslationStatusService().addLog(
+      message:
+          'AI refine worker: ${needLevels.length}/${words.length} words need CEFR levels',
+    );
+
+    final sourceLang = _resolveBookSourceLanguage(bookId);
+    final chunkSize = Prefs().aiBatchSize <= 0
+        ? 20
+        : (Prefs().aiBatchSize > 60 ? 60 : Prefs().aiBatchSize);
+
+    final levelUpdates = <String, String?>{};
+    for (var i = 0; i < needLevels.length; i += chunkSize) {
+      final end = (i + chunkSize > needLevels.length)
+          ? needLevels.length
+          : i + chunkSize;
+      final chunk = needLevels.sublist(i, end);
+      final chunkLevels = await _requestWordLevelsFromAi(chunk, sourceLang);
+      levelUpdates.addAll(chunkLevels);
+    }
+
+    if (levelUpdates.isEmpty) {
+      AiTranslationStatusService().addLog(
+        message: 'AI refine worker: AI returned no usable level mappings',
+      );
+      return false;
+    }
+
+    final cacheUpdates = <String, _WordCacheEntry>{};
+    var skippedMissingExisting = 0;
+    var skippedNullLevel = 0;
+    var skippedSameLevel = 0;
+    for (final entry in levelUpdates.entries) {
+      final word = _normalizeWordForCache(entry.key);
+      final existing = decoded[word];
+      if (existing == null) {
+        skippedMissingExisting++;
+        continue;
+      }
+      final normalizedLevel =
+          entry.value == null ? null : _normalizeCefrLevel(entry.value!);
+      if (normalizedLevel == null) {
+        skippedNullLevel++;
+        continue;
+      }
+      if (existing.level == normalizedLevel) {
+        skippedSameLevel++;
+        continue;
+      }
+
+      cacheUpdates[word] = _WordCacheEntry(
+        translation: existing.translation,
+        level: normalizedLevel,
+      );
+    }
+    AiTranslationStatusService().addLog(
+      message:
+          'AI refine worker: levelUpdates=${levelUpdates.length}, cacheUpdates=${cacheUpdates.length}, skipped(null=$skippedNullLevel, same=$skippedSameLevel, missing=$skippedMissingExisting)',
+    );
+
+    if (cacheUpdates.isEmpty) {
+      AiTranslationStatusService().addLog(
+        message:
+            'AI refine worker: no cache updates after normalization/filtering',
+      );
+      return false;
+    }
+    AiTranslationStatusService().addLog(
+      message:
+          'AI refine worker: applying ${cacheUpdates.length} level updates to cache',
+    );
+
+    await translationCacheDao.insertTranslations(
+      bookId,
+      _wordWiseWordCacheLevel,
+      _encodeWordCacheUpdates(cacheUpdates),
+    );
+    return true;
+  }
+
+  Future<Map<String, String?>> _requestWordLevelsFromAi(
+      List<String> words, LangListEnum sourceLang) async {
+    if (words.isEmpty) return {};
+
+    final statusService = AiTranslationStatusService();
+    final requestId = statusService.beginRequest(
+      itemsCount: words.length,
+      source: 'ai_refine_levels',
+      message:
+          'AI refine started: ${words.length} words (${sourceLang.code})',
+    );
+    final stopwatch = Stopwatch()..start();
+
+    try {
+      final payload = generatePromptClassifyWordLevels(
+        jsonEncode(words),
+        sourceLang.code,
+      );
+      final messages = payload.buildMessages();
+      var response = '';
+      await for (final chunk in aiGenerateStream(messages, ref: ref)) {
+        response = chunk;
+      }
+      final parsed = _parseWordLevelMapFromAi(response, words);
+      final nonNullCount =
+          parsed.values.where((value) => (value ?? '').isNotEmpty).length;
+      stopwatch.stop();
+      statusService.endRequest(
+        requestId,
+        message:
+            'AI refine finished: ${parsed.length}/${words.length} words, non-null=$nonNullCount (${stopwatch.elapsedMilliseconds}ms)',
+        requestPayload: _clipStatusPayload(jsonEncode(words)),
+        responsePayload: _clipStatusPayload(response),
+      );
+      return parsed;
+    } catch (e) {
+      _aiDebugLog('⚠️ [AI LEVEL REQUEST ERROR] $e');
+      stopwatch.stop();
+      statusService.endRequest(
+        requestId,
+        isError: true,
+        message: 'AI refine failed: ${words.length} words',
+        requestPayload: _clipStatusPayload(jsonEncode(words)),
+        responsePayload: _clipStatusPayload(e.toString()),
+      );
+      return {};
+    }
+  }
+
+  Map<String, String?> _parseWordLevelMapFromAi(
+      String response, List<String> requestedWords) {
+    if (response.trim().isEmpty) return {};
+
+    String cleaned = response.trim();
+    final fenceRegex = RegExp(r'```(?:json)?\s*\n?([\s\S]*?)\n?\s*```');
+    final fenceMatch = fenceRegex.firstMatch(cleaned);
+    if (fenceMatch != null) {
+      cleaned = fenceMatch.group(1)!.trim();
+    }
+
+    dynamic decoded;
+    try {
+      decoded = jsonDecode(cleaned);
+    } catch (_) {
+      final objectMatch = RegExp(r'\{[\s\S]*\}').firstMatch(cleaned);
+      if (objectMatch == null) return {};
+      try {
+        decoded = jsonDecode(objectMatch.group(0)!);
+      } catch (_) {
+        return {};
+      }
+    }
+
+    final result = <String, String?>{};
+    if (decoded is Map) {
+      for (final entry in decoded.entries) {
+        final word = _normalizeWordForCache(entry.key.toString());
+        if (word.isEmpty) continue;
+        final level = entry.value?.toString();
+        final normalized = level == null
+            ? null
+            : _normalizeCefrLevel(level, allowNull: true);
+        result[word] = normalized;
+      }
+    }
+
+    if (decoded is List) {
+      for (final item in decoded) {
+        if (item is List && item.length >= 2) {
+          final word = _normalizeWordForCache(item[0].toString());
+          final levelRaw = item[1]?.toString();
+          final level = levelRaw == null
+              ? null
+              : _normalizeCefrLevel(levelRaw, allowNull: true);
+          if (word.isNotEmpty) {
+            result[word] = level;
+          }
+        }
+      }
+    }
+
+    // Keep only requested words.
+    final requested =
+        requestedWords.map(_normalizeWordForCache).toSet();
+    result.removeWhere((word, _) => !requested.contains(word));
+    return result;
+  }
+
+  Future<_WordWiseNonAiResult> _translateWordWiseWithNonAi({
+    required List<String> texts,
+    required TranslateService service,
+    required LangListEnum from,
+    required LangListEnum to,
+    required String pageInfo,
+  }) async {
+    final sentenceTranslations = <String, String>{};
+    final wordCacheUpdates = <String, _WordCacheEntry>{};
+    final wordsNeedingLevelRefine = <String>{};
+    final sentenceSegments = <String, List<_WordSegment>>{};
+    final uniqueWords = <String>{};
+
+    for (final text in texts) {
+      final segments = _tokenizeWordSegments(text);
+      sentenceSegments[text] = segments;
+      for (final segment in segments) {
+        if (segment.isWord) {
+          uniqueWords.add(segment.normalizedWord!);
+        }
+      }
+    }
+
+    final rawWordCache = uniqueWords.isEmpty
+        ? <String, String>{}
+        : await translationCacheDao.getTranslations(
+            widget.book.id,
+            _wordWiseWordCacheLevel,
+            uniqueWords.toList(),
+          );
+    final wordCache = <String, _WordCacheEntry>{};
+    for (final entry in rawWordCache.entries) {
+      final word = _normalizeWordForCache(entry.key);
+      wordCache[word] = _decodeWordCacheEntry(entry.value);
+    }
+
+    final missingWords =
+        uniqueWords.where((word) => !wordCache.containsKey(word)).toList();
+    final unresolvedWords = Set<String>.from(missingWords);
+
+    final int wordsPerRequest = Prefs().aiBatchSize <= 0
+        ? 1
+        : (Prefs().aiBatchSize > 100 ? 100 : Prefs().aiBatchSize);
+
+    for (var start = 0; start < missingWords.length; start += wordsPerRequest) {
+      final end = (start + wordsPerRequest > missingWords.length)
+          ? missingWords.length
+          : start + wordsPerRequest;
+      final chunkWords = missingWords.sublist(start, end);
+      if (chunkWords.isEmpty) continue;
+
+      final statusService = AiTranslationStatusService();
+      final requestId = statusService.beginRequest(
+        itemsCount: chunkWords.length,
+        source: 'non_ai_word_translate_${service.name}',
+        message:
+            'Word translate started (${service.name}): ${chunkWords.length} words',
+      );
+      final stopwatch = Stopwatch()..start();
+
+      try {
+        final chunkResults = await service.provider.translateBatch(
+          chunkWords,
+          from,
+          to,
+          level: 'full',
+          pageInfo: pageInfo,
+          ref: ref,
+        );
+
+        for (var i = 0; i < chunkWords.length; i++) {
+          final word = chunkWords[i];
+          final translatedWord =
+              (i < chunkResults.length ? chunkResults[i] : '').trim();
+
+          if (translatedWord == '__ANX_ERROR__' ||
+              translatedWord == '__ANX_RATE_LIMIT__' ||
+              translatedWord == '__ANX_RETRY__' ||
+              translatedWord == '__ANX_CANCELLED__') {
+            continue;
+          }
+
+          if (translatedWord.isEmpty ||
+              translatedWord.toLowerCase() == word.toLowerCase()) {
+            final cacheEntry =
+                const _WordCacheEntry(translation: '', level: null);
+            wordCache[word] = cacheEntry;
+            wordCacheUpdates[word] = cacheEntry;
+            unresolvedWords.remove(word);
+            continue;
+          }
+
+          final cacheEntry =
+              _WordCacheEntry(translation: translatedWord, level: null);
+          wordCache[word] = cacheEntry;
+          wordCacheUpdates[word] = cacheEntry;
+          wordsNeedingLevelRefine.add(word);
+          unresolvedWords.remove(word);
+        }
+        stopwatch.stop();
+        statusService.endRequest(
+          requestId,
+          message:
+              'Word translate finished (${service.name}): ${chunkWords.length} words (${stopwatch.elapsedMilliseconds}ms)',
+          requestPayload: _clipStatusPayload(jsonEncode(chunkWords)),
+          responsePayload: _clipStatusPayload(jsonEncode(chunkResults)),
+        );
+      } catch (e) {
+        _aiDebugLog('⚠️ [NON-AI WORD CHUNK ERROR] $e');
+        stopwatch.stop();
+        statusService.endRequest(
+          requestId,
+          isError: true,
+          message:
+              'Word translate failed (${service.name}): ${chunkWords.length} words',
+          requestPayload: _clipStatusPayload(jsonEncode(chunkWords)),
+          responsePayload: _clipStatusPayload(e.toString()),
+        );
+
+        // Fallback: do best-effort per-word translation so we don't get stuck
+        // in endless JS retries for the same sentence.
+        for (final word in chunkWords) {
+          try {
+            final single = (await service.provider
+                    .translateTextOnly(word, from, to, ref: ref))
+                .trim();
+            if (single.isNotEmpty && single.toLowerCase() != word.toLowerCase()) {
+              final cacheEntry = _WordCacheEntry(translation: single, level: null);
+              wordCache[word] = cacheEntry;
+              wordCacheUpdates[word] = cacheEntry;
+              wordsNeedingLevelRefine.add(word);
+            } else {
+              final cacheEntry =
+                  const _WordCacheEntry(translation: '', level: null);
+              wordCache[word] = cacheEntry;
+              wordCacheUpdates[word] = cacheEntry;
+            }
+          } catch (singleErr) {
+            _aiDebugLog('⚠️ [NON-AI WORD SINGLE ERROR] "$word": $singleErr');
+            final cacheEntry = const _WordCacheEntry(translation: '', level: null);
+            wordCache[word] = cacheEntry;
+            wordCacheUpdates[word] = cacheEntry;
+          } finally {
+            unresolvedWords.remove(word);
+          }
+        }
+      }
+    }
+
+    for (final text in texts) {
+      final segments = sentenceSegments[text] ?? const <_WordSegment>[];
+      final hasUnresolvedWord = segments.any((segment) =>
+          segment.isWord &&
+          unresolvedWords.contains(segment.normalizedWord ?? ''));
+      if (hasUnresolvedWord) {
+        sentenceTranslations[text] = '__ANX_RETRY__';
+        continue;
+      }
+
+      final buffer = StringBuffer();
+      var hasMarker = false;
+
+      for (final segment in segments) {
+        if (!segment.isWord) {
+          buffer.write(segment.rawText);
+          continue;
+        }
+
+        final cacheEntry = wordCache[segment.normalizedWord ?? ''];
+        final translatedWord = cacheEntry?.translation.trim() ?? '';
+        if (translatedWord.isEmpty) {
+          buffer.write(segment.rawText);
+          continue;
+        }
+        if ((cacheEntry?.level ?? '').trim().isEmpty) {
+          wordsNeedingLevelRefine.add(segment.normalizedWord ?? '');
+        }
+
+        final adjustedTranslation =
+            _alignTranslationCaseWithSource(segment.rawText, translatedWord);
+
+        hasMarker = true;
+        final normalizedLevel =
+            _normalizeCefrLevel(cacheEntry?.level ?? '', allowNull: true);
+        final original = _escapeMarkerValue(segment.rawText);
+        final translated = _escapeMarkerValue(adjustedTranslation);
+        if (normalizedLevel == null) {
+          buffer.write('[$original|$translated]');
+        } else {
+          buffer.write('[$original|$translated|$normalizedLevel]');
+        }
+      }
+
+      if (!hasMarker) {
+        sentenceTranslations[text] = '';
+      } else {
+        sentenceTranslations[text] = buffer.toString();
+      }
+    }
+
+    return _WordWiseNonAiResult(
+      sentenceTranslations: sentenceTranslations,
+      wordCacheUpdates: wordCacheUpdates,
+      wordsNeedingLevelRefine: wordsNeedingLevelRefine,
+    );
+  }
+
   Future<void> setHandler(InAppWebViewController controller) async {
     controller.addJavaScriptHandler(
         handlerName: 'onLoadEnd',
@@ -907,7 +1730,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
           String text = args[0];
           _aiDebugLog('🌐 [TRANSLATE REQUEST] "$text"');
           final service = Prefs().fullTextTranslateService;
-          final from = Prefs().fullTextTranslateFrom;
+          final from = _resolveBookSourceLanguage();
           final to = Prefs().fullTextTranslateTo;
 
           final result =
@@ -935,7 +1758,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
           final bookId = widget.book.id;
           // Use unified 'word_wise' cache key for all interlinear levels (A1-C2)
           // This allows switching levels without re-translating
-          final cacheLevel = (level != 'full') ? 'word_wise' : 'full';
+          final cacheLevel = (level != 'full') ? _wordWiseCacheLevel : 'full';
 
           final cached = await translationCacheDao.getTranslations(
               bookId, cacheLevel, texts);
@@ -1003,13 +1826,15 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
           final List<dynamic> textsList = jsonDecode(textsJsonStr);
           final texts = textsList.map((e) => e.toString()).toList();
           final service = Prefs().fullTextTranslateService;
+          final isWordLevel = level != 'full';
+          final isAiService = service.name == 'ai';
           _aiDebugLog(
               '🌐 [TRANSLATE BATCH] service=${service.name}, level=$level, ${texts.length} texts');
-          final from = Prefs().fullTextTranslateFrom;
+          final from = _resolveBookSourceLanguage();
           final to = Prefs().fullTextTranslateTo;
           final bookId = widget.book.id;
           // Use unified 'word_wise' cache key for all interlinear levels (A1-C2)
-          final cacheLevel = (level != 'full') ? 'word_wise' : 'full';
+          final cacheLevel = isWordLevel ? _wordWiseCacheLevel : 'full';
 
           // Step 1: Wait until a worker slot is available
           while (_activeTranslationWorkers >= _maxTranslationWorkers) {
@@ -1023,8 +1848,8 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
             if (!mounted) return jsonEncode(<String>[]);
 
             // Step 2: Check translation cache AFTER acquiring slot
-            final cachedRaw =
-                await translationCacheDao.getTranslations(bookId, cacheLevel, texts);
+            final cachedRaw = await translationCacheDao.getTranslations(
+                bookId, cacheLevel, texts);
             if (!mounted) return jsonEncode(<String>[]);
 
             bool hasWordLevelMarkers(String value) {
@@ -1050,7 +1875,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
 
             final cached = Map<String, String>.from(cachedRaw);
             final invalidCachedTexts = <String>{};
-            if (level != 'level0') {
+            if (isWordLevel) {
               for (final entry in cached.entries) {
                 final originalText = entry.key.trim();
                 final cachedText = entry.value.trim();
@@ -1072,47 +1897,133 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
             final uncachedTexts =
                 texts.where((t) => !cached.containsKey(t)).toSet().toList();
             _aiDebugLog(
-                '📋 [CACHE HIT] ${cached.length}/${texts.length} found in cache, ${uncachedTexts.length} need AI (${invalidCachedTexts.length} stale cache entries ignored)');
+                '📋 [CACHE HIT] ${cached.length}/${texts.length} found in cache, ${uncachedTexts.length} need provider call (${invalidCachedTexts.length} stale cache entries ignored)');
 
-            // Step 3: Translate uncached texts via AI
+            if (isWordLevel && !isAiService && cached.isNotEmpty) {
+              unawaited(_queueRefineForVisibleTextsFromWordCache(
+                cached.keys.toList(growable: false),
+                markedTexts: cached.values.toList(growable: false),
+              ));
+            }
+
+            // Step 3: Translate uncached texts via selected provider
             Map<String, String> newTranslations = {};
             Map<String, String> transientFailures = {};
             if (uncachedTexts.isNotEmpty) {
               if (!mounted) return jsonEncode(<String>[]);
-              final aiResults = await service.provider.translateBatch(
-                  uncachedTexts, from, to,
-                  level: level, pageInfo: pageInfo, ref: ref);
-              if (!mounted) return jsonEncode(<String>[]);
-              _aiDebugLog(
-                  '✅ [AI RESPONSE] ${aiResults.length} results for ${uncachedTexts.length} texts');
+              if (isWordLevel && !isAiService) {
+                final nonAiWordWiseResult = await _translateWordWiseWithNonAi(
+                  texts: uncachedTexts,
+                  service: service,
+                  from: from,
+                  to: to,
+                  pageInfo: pageInfo,
+                );
+                if (!mounted) return jsonEncode(<String>[]);
 
-              // Map results back to original texts
-              for (int i = 0;
-                  i < uncachedTexts.length && i < aiResults.length;
-                  i++) {
-                final originalText = uncachedTexts[i];
-                final resultText = aiResults[i].trim();
-                if (resultText == '__ANX_RATE_LIMIT__' ||
-                    resultText == '__ANX_ERROR__' ||
-                    resultText == '__ANX_RETRY__' ||
-                    resultText == '__ANX_CANCELLED__') {
-                  transientFailures[originalText] = resultText;
-                  continue;
+                if (nonAiWordWiseResult.wordCacheUpdates.isNotEmpty) {
+                  await translationCacheDao.insertTranslations(
+                    bookId,
+                    _wordWiseWordCacheLevel,
+                    _encodeWordCacheUpdates(
+                        nonAiWordWiseResult.wordCacheUpdates),
+                  );
+                  if (!mounted) return jsonEncode(<String>[]);
                 }
-                if (level != 'level0') {
-                  if (resultText.isEmpty ||
-                      resultText == originalText.trim()) {
-                    // Store empty to indicate "no translation needed"
-                    newTranslations[originalText] = '';
+
+                _scheduleAiWordLevelRefinement(
+                    nonAiWordWiseResult.wordsNeedingLevelRefine);
+
+                for (final originalText in uncachedTexts) {
+                  final resultText =
+                      (nonAiWordWiseResult.sentenceTranslations[originalText] ??
+                              '')
+                          .trim();
+                  if (resultText == '__ANX_RETRY__') {
+                    transientFailures[originalText] = resultText;
                     continue;
                   }
-                  if (!hasWordLevelMarkers(resultText)) {
-                    // Suspicious answer: keep it transient (no cache) so JS can retry with limits.
-                    transientFailures[originalText] = '__ANX_RETRY__';
+                  newTranslations[originalText] = resultText;
+                }
+                _aiDebugLog(
+                    '✅ [NON-AI WORD RESPONSE] ${newTranslations.length} sentence results, ${nonAiWordWiseResult.wordCacheUpdates.length} word-cache updates, ${nonAiWordWiseResult.wordsNeedingLevelRefine.length} pending AI level refine');
+              } else {
+                final statusService = AiTranslationStatusService();
+                final shouldTrackInBridge = service.name != 'ai';
+                final requestId = shouldTrackInBridge
+                    ? statusService.beginRequest(
+                        itemsCount: uncachedTexts.length,
+                        source: 'translate_batch_${service.name}',
+                        message:
+                            'Batch translate started (${service.name}): ${uncachedTexts.length} items',
+                      )
+                    : -1;
+                final stopwatch =
+                    shouldTrackInBridge ? (Stopwatch()..start()) : null;
+                late final List<String> providerResults;
+                try {
+                  providerResults = await service.provider.translateBatch(
+                      uncachedTexts, from, to,
+                      level: level, pageInfo: pageInfo, ref: ref);
+                  if (!mounted) return jsonEncode(<String>[]);
+                  if (stopwatch != null) {
+                    stopwatch.stop();
+                    statusService.endRequest(
+                      requestId,
+                      message:
+                          'Batch translate finished (${service.name}): ${providerResults.length}/${uncachedTexts.length} items (${stopwatch.elapsedMilliseconds}ms)',
+                      requestPayload:
+                          _clipStatusPayload(jsonEncode(uncachedTexts)),
+                      responsePayload:
+                          _clipStatusPayload(jsonEncode(providerResults)),
+                    );
+                  }
+                } catch (e) {
+                  if (stopwatch != null) {
+                    stopwatch.stop();
+                    statusService.endRequest(
+                      requestId,
+                      isError: true,
+                      message:
+                          'Batch translate failed (${service.name}): ${uncachedTexts.length} items',
+                      requestPayload:
+                          _clipStatusPayload(jsonEncode(uncachedTexts)),
+                      responsePayload: _clipStatusPayload(e.toString()),
+                    );
+                  }
+                  rethrow;
+                }
+                _aiDebugLog(
+                    '✅ [PROVIDER RESPONSE] ${providerResults.length} results for ${uncachedTexts.length} texts');
+
+                // Map results back to original texts
+                for (int i = 0;
+                    i < uncachedTexts.length && i < providerResults.length;
+                    i++) {
+                  final originalText = uncachedTexts[i];
+                  final resultText = providerResults[i].trim();
+                  if (resultText == '__ANX_RATE_LIMIT__' ||
+                      resultText == '__ANX_ERROR__' ||
+                      resultText == '__ANX_RETRY__' ||
+                      resultText == '__ANX_CANCELLED__') {
+                    transientFailures[originalText] = resultText;
                     continue;
                   }
+                  if (isWordLevel) {
+                    if (resultText.isEmpty ||
+                        resultText == originalText.trim()) {
+                      // Store empty to indicate "no translation needed"
+                      newTranslations[originalText] = '';
+                      continue;
+                    }
+                    if (!hasWordLevelMarkers(resultText)) {
+                      // Suspicious answer: keep it transient (no cache) so JS can retry with limits.
+                      transientFailures[originalText] = '__ANX_RETRY__';
+                      continue;
+                    }
+                  }
+                  newTranslations[originalText] = resultText;
                 }
-                newTranslations[originalText] = resultText;
               }
 
               // Step 4: Save new translations to cache (using unified key)

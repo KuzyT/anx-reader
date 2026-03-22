@@ -144,11 +144,11 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
-  test: any
+#  test: any
   build_runner: ^2.4.13
-  custom_lint: ^0.7.5
+#  custom_lint: ^0.7.5
   riverpod_generator: ^2.4.3
-  riverpod_lint: ^2.3.13
+#  riverpod_lint: ^2.3.13
   freezed: ^3.0.2
   json_serializable: ^6.9.0
 #  flutter_launcher_icons: ^0.11.0

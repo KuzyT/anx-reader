@@ -640,7 +640,7 @@ class Prefs extends ChangeNotifier {
 
   TranslationLevelEnum get translationLevel {
     return TranslationLevelEnum.fromCode(
-        prefs.getString('translationLevel') ?? 'level0');
+        prefs.getString('translationLevel') ?? 'full');
   }
 
   set translationLevel(TranslationLevelEnum level) {
@@ -654,6 +654,48 @@ class Prefs extends ChangeNotifier {
 
   set aiBatchSize(int size) {
     prefs.setInt('aiBatchSize', size);
+    notifyListeners();
+  }
+
+  int get aiTranslateWorkers {
+    return prefs.getInt('aiTranslateWorkers') ?? 1;
+  }
+
+  set aiTranslateWorkers(int workers) {
+    prefs.setInt('aiTranslateWorkers', workers);
+    notifyListeners();
+  }
+
+  bool get translationColorEnabled {
+    return prefs.getBool('translationColorEnabled') ?? false;
+  }
+
+  set translationColorEnabled(bool enabled) {
+    prefs.setBool('translationColorEnabled', enabled);
+    notifyListeners();
+  }
+
+  Map<String, String> get translationLevelColors {
+    final str = prefs.getString('translationLevelColors');
+    if (str != null && str.isNotEmpty) {
+      try {
+        final Map<String, dynamic> decoded = jsonDecode(str);
+        return decoded.map((key, value) => MapEntry(key, value.toString()));
+      } catch (_) {}
+    }
+    return {
+      "0": "#2D2D2D",
+      "a1": "#1A7A3C",
+      "a2": "#1A7575",
+      "b1": "#1655A8",
+      "b2": "#6B1FA8",
+      "c1": "#8F4700",
+      "c2": "#A81A1A"
+    };
+  }
+
+  set translationLevelColors(Map<String, String> colors) {
+    prefs.setString('translationLevelColors', jsonEncode(colors));
     notifyListeners();
   }
 

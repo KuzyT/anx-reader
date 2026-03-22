@@ -1,5 +1,6 @@
 enum TranslationLevelEnum {
-  level0('level0', '0 - Full'),
+  full('full', 'Full translation'),
+  level0('level0', '0 - Word by word'),
   a1('a1', 'A1'),
   a2('a2', 'A2'),
   b1('b1', 'B1'),
@@ -15,18 +16,20 @@ enum TranslationLevelEnum {
   static TranslationLevelEnum fromCode(String code) {
     return TranslationLevelEnum.values.firstWhere(
       (e) => e.code == code,
-      orElse: () => TranslationLevelEnum.level0,
+      orElse: () => TranslationLevelEnum.full,
     );
   }
 
   /// Whether this level requires word-by-word translation
-  bool get isWordLevel => this != TranslationLevelEnum.level0;
+  bool get isWordLevel => this != TranslationLevelEnum.full;
 
   /// Description for the AI prompt
   String get levelDescription {
     switch (this) {
-      case TranslationLevelEnum.level0:
+      case TranslationLevelEnum.full:
         return 'Translate everything';
+      case TranslationLevelEnum.level0:
+        return 'Translate every single word, regardless of how basic it is';
       case TranslationLevelEnum.a1:
         return 'A1 beginner - translate all but the most basic words (hello, yes, no, numbers 1-10)';
       case TranslationLevelEnum.a2:

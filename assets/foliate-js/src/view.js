@@ -607,6 +607,10 @@ export class View extends HTMLElement {
     this.#translator.setTranslationLevel(level)
   }
 
+  setTranslationColors(enabled, jsonColors) {
+    this.#translator.setTranslationColors(enabled, jsonColors)
+  }
+
   setAiBatchSize(size) {
     this.#translator.setAiBatchSize(size)
   }

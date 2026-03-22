@@ -149,7 +149,7 @@ abstract class TranslateServiceProvider {
     List<String> texts,
     LangListEnum from,
     LangListEnum to, {
-    String level = 'level0',
+    String level = 'full',
     String? pageInfo,
     WidgetRef? ref,
   }) async {

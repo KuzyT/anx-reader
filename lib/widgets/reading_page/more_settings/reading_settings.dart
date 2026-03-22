@@ -8,13 +8,13 @@ import 'package:anx_reader/enums/translation_level.dart';
 import 'package:anx_reader/enums/writing_mode.dart';
 import 'package:anx_reader/enums/code_highlight_theme.dart';
 import 'package:anx_reader/l10n/generated/L10n.dart';
-import 'package:anx_reader/l10n/translation_ui_fallback.dart';
 import 'package:anx_reader/page/reading_page.dart';
 import 'package:anx_reader/page/settings_page/subpage/fonts.dart';
 import 'package:anx_reader/widgets/common/anx_segmented_button.dart';
 import 'package:anx_reader/widgets/reading_page/ai_status_overlay.dart';
 import 'package:flutter/material.dart';
 import 'package:icons_plus/icons_plus.dart';
+import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 
 class ReadingMoreSettings extends StatefulWidget {
   const ReadingMoreSettings({super.key});
@@ -32,7 +32,9 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
   Future<void> _showClearCacheDialog() async {
     final bookId = epubPlayerKey.currentState!.widget.book.id;
     final currentLevelEnum = Prefs().translationLevel;
-    final currentLevelName = currentLevelEnum.name;
+    final isWordLevel = currentLevelEnum != TranslationLevelEnum.full;
+    final currentLevelDbKey = isWordLevel ? 'word_wise' : 'full';
+    final displayLevelName = isWordLevel ? 'Word-by-word' : currentLevelEnum.displayName;
 
     ClearCacheScope scope = ClearCacheScope.page;
     bool currentLevelOnly = true;
@@ -68,7 +70,7 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
                   const Divider(),
                   SwitchListTile(
                     title: Text(L10n.of(context)
-                        .translationClearCacheOnlyLevel(currentLevelEnum.displayName)),
+                        .translationClearCacheOnlyLevel(displayLevelName)),
                     value: currentLevelOnly,
                     onChanged: (v) =>
                         setDialogState(() => currentLevelOnly = v),
@@ -84,7 +86,7 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
                   onPressed: () async {
                     Navigator.pop(context);
                     await _confirmClearCache(bookId, scope,
-                        currentLevelOnly ? currentLevelName : null);
+                        currentLevelOnly ? currentLevelDbKey : null);
                   },
                   child: Text(
                     L10n.of(context).storageClearCache,
@@ -871,32 +873,56 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
               children: [
                 Text(L10n.of(context).translationAiBatchSize,
                     style: Theme.of(context).textTheme.titleMedium),
-                Text(Prefs().aiBatchSize.toString(),
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          color: Theme.of(context).colorScheme.primary,
-                        )),
+                Text('${Prefs().aiBatchSize}',
+                    style: Theme.of(context).textTheme.bodySmall),
               ],
             ),
-            if (!isReading)
-              Text(L10n.of(context).translationOnlyWhileReading,
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodySmall
-                      ?.copyWith(color: Colors.grey)),
             Slider(
               value: Prefs().aiBatchSize.toDouble(),
               min: 5,
               max: 50,
-              divisions: 9, // Steps: 5, 10, 15, ..., 50
-              onChanged: isReading
-                  ? (value) {
-                      setState(() {
-                        Prefs().aiBatchSize = value.toInt();
-                        epubPlayerKey.currentState
-                            ?.setAiBatchSize(value.toInt());
-                      });
-                    }
-                  : null,
+              divisions: 9,
+              label: '${Prefs().aiBatchSize}',
+              onChanged: (value) {
+                setState(() {
+                  Prefs().aiBatchSize = value.toInt();
+                  epubPlayerKey.currentState?.setAiBatchSize(value.toInt());
+                });
+              },
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget aiWorkersWidget() {
+      return StatefulBuilder(
+        builder: (context, setState) => Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('AI Workers', // TODO: move to L10n
+                    style: Theme.of(context).textTheme.titleMedium),
+                Text('${Prefs().aiTranslateWorkers}',
+                    style: Theme.of(context).textTheme.bodySmall),
+              ],
+            ),
+            Slider(
+              value: Prefs().aiTranslateWorkers.toDouble(),
+              min: 1,
+              max: 10,
+              divisions: 9,
+              label: '${Prefs().aiTranslateWorkers}',
+              onChanged: (value) {
+                setState(() {
+                  Prefs().aiTranslateWorkers = value.toInt();
+                  epubPlayerKey.currentState?.setAiWorkers(value.toInt());
+                });
+              },
             ),
           ],
         ),
@@ -991,6 +1017,123 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
       );
     }
 
+    Widget translationColorsWidget() {
+      return StatefulBuilder(
+        builder: (context, setState) => Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('Colorize Translation Levels', // TODO: L10n
+                    style: Theme.of(context).textTheme.titleMedium),
+                Switch(
+                  value: Prefs().translationColorEnabled,
+                  onChanged: (val) {
+                    setState(() {
+                      Prefs().translationColorEnabled = val;
+                      epubPlayerKey.currentState?.setTranslationColors(
+                        Prefs().translationColorEnabled,
+                        jsonEncode(Prefs().translationLevelColors),
+                      );
+                    });
+                  },
+                ),
+              ],
+            ),
+            if (Prefs().translationColorEnabled)
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ...['0', 'a1', 'a2', 'b1', 'b2', 'c1', 'c2'].map((level) {
+                    final colors = Prefs().translationLevelColors;
+                    final hexString = colors[level] ?? '#000000';
+                    final colorInt = int.tryParse(hexString.replaceFirst('#', '0xff')) ?? 0xff000000;
+                    final color = Color(colorInt);
+
+                    return GestureDetector(
+                      onTap: () {
+                        showDialog(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            title: Text('Select color for $level'),
+                            content: SingleChildScrollView(
+                              child: BlockPicker(
+                                pickerColor: color,
+                                onColorChanged: (newColor) {
+                                  setState(() {
+                                    final newHexStr = '#${newColor.value.toRadixString(16).substring(2).toUpperCase()}';
+                                    final newColors = Map<String, String>.from(Prefs().translationLevelColors);
+                                    newColors[level] = newHexStr;
+                                    Prefs().translationLevelColors = newColors;
+                                    epubPlayerKey.currentState?.setTranslationColors(
+                                      Prefs().translationColorEnabled,
+                                      jsonEncode(Prefs().translationLevelColors),
+                                    );
+                                  });
+                                },
+                              ),
+                            ),
+                            actions: [
+                              TextButton(
+                                child: const Text('Close'),
+                                onPressed: () => Navigator.of(ctx).pop(),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                      child: Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: color,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.grey),
+                        ),
+                        child: Center(
+                          child: Text(
+                            level.toUpperCase(),
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ),
+                    );
+                  }),
+                  IconButton(
+                    icon: const Icon(Icons.refresh, size: 20),
+                    onPressed: () {
+                      setState(() {
+                        Prefs().translationLevelColors = {
+                          "0": "#2D2D2D",
+                          "a1": "#1A7A3C",
+                          "a2": "#1A7575",
+                          "b1": "#1655A8",
+                          "b2": "#6B1FA8",
+                          "c1": "#8F4700",
+                          "c2": "#A81A1A"
+                        };
+                        epubPlayerKey.currentState?.setTranslationColors(
+                          Prefs().translationColorEnabled,
+                          jsonEncode(Prefs().translationLevelColors),
+                        );
+                      });
+                    },
+                    tooltip: 'Reset colors',
+                  )
+                ],
+              ),
+          ],
+        ),
+      );
+    }
+
     return Container(
       padding: const EdgeInsets.all(18.0),
       child: Column(
@@ -1002,10 +1145,13 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
           if (epubPlayerKey.currentState != null &&
               Prefs().getBookTranslationMode(
                       epubPlayerKey.currentState!.widget.book.id) ==
-                  TranslationModeEnum.interlinear)
+                  TranslationModeEnum.interlinear) ...[
             translationLevel(),
+            translationColorsWidget(),
+          ],
           showAiTranslationStatusWidget(),
           aiBatchSizeWidget(),
+          aiWorkersWidget(),
           if (epubPlayerKey.currentState != null) ...[
             const SizedBox(height: 8),
             Row(

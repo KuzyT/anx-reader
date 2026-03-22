@@ -92,14 +92,14 @@ class AiTranslateProvider extends TranslateServiceProvider {
   }
 
   /// Batch translate: sends all texts in one AI request, expects JSON array response.
-  /// For level0: sentence-level translation (JSON array of strings).
+  /// For full: sentence-level translation (JSON array of strings).
   /// For A1-C2: word-level translation (JSON array of word pairs).
   @override
   Future<List<String>> translateBatch(
     List<String> texts,
     LangListEnum from,
     LangListEnum to, {
-    String level = 'level0',
+    String level = 'full',
     String? pageInfo,
     WidgetRef? ref,
   }) async {
@@ -123,7 +123,7 @@ class AiTranslateProvider extends TranslateServiceProvider {
       if (texts.isEmpty) return [];
       statusService.startTranslating(texts.length);
 
-      if (texts.length == 1 && level == 'level0') {
+      if (texts.length == 1 && level == 'full') {
         // Single text — use standard translate
         final result =
             await this.translateTextOnly(texts[0], from, to, ref: ref);
@@ -133,7 +133,7 @@ class AiTranslateProvider extends TranslateServiceProvider {
       final textsJson = jsonEncode(texts);
       late PromptTemplatePayload payload;
 
-      if (level != 'level0') {
+      if (level != 'full') {
         // Word-level translation with word markers for interlinear mode
         _debugLog(
             '🎯 [TRANSLATE LEVEL] Using WORD-LEVEL prompt for level=$level');
@@ -275,7 +275,7 @@ class AiTranslateProvider extends TranslateServiceProvider {
           // RE-BUILD messages for retry
           final textsJsonRetry = jsonEncode(texts);
           late PromptTemplatePayload payloadRetry;
-          if (level != 'level0') {
+          if (level != 'full') {
             payloadRetry = generatePromptTranslateBatchWordLevel(textsJsonRetry,
                 mapLanguageCode(to), mapLanguageCode(from), level);
           } else {
@@ -353,8 +353,7 @@ class AiTranslateProvider extends TranslateServiceProvider {
         return List.filled(texts.length, '__ANX_ERROR__');
       }
 
-      // If we fall through to here
-      return List.filled(texts.length, '__ANX_ERROR__');
+      // (Unreachable fallback return removed as if/else all return)
     } finally {
       AiTranslationStatusService().setIdle();
       // Release the lock for the next request in queue

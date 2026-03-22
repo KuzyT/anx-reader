@@ -24,7 +24,7 @@ const translate = async (text) => {
 }
 
 // Batch translation function — sends array of texts in one request
-const translateBatch = async (texts, level = 'level0', pageInfo = '') => {
+const translateBatch = async (texts, level = 'full', pageInfo = '') => {
   try {
     const jsonStr = JSON.stringify(texts)
     const resultJson = await window.flutter_inappwebview.callHandler('translateBatch', jsonStr, level, pageInfo)
@@ -44,8 +44,11 @@ const translateBatch = async (texts, level = 'level0', pageInfo = '') => {
 
 export class Translator {
   #translationMode = TranslationMode.OFF
-  #translationLevel = 'level0'
+  #translationColorEnabled = false
+  #translationLevelColors = {}
+  #translationLevel = 'full'
   #aiBatchSize = 30
+  #aiWorkers = 1
   observedElements = new Set()
   #translatedElements = new WeakMap()
   #observer = null
@@ -118,6 +121,49 @@ export class Translator {
     }
   }
 
+  setTranslationColors(enabled, jsonColors) {
+    let changed = false
+    if (this.#translationColorEnabled !== enabled) {
+      this.#translationColorEnabled = enabled
+      changed = true
+    }
+    if (jsonColors) {
+      try {
+        const colors = JSON.parse(jsonColors)
+        if (JSON.stringify(this.#translationLevelColors) !== JSON.stringify(colors)) {
+          this.#translationLevelColors = colors
+          changed = true
+        }
+      } catch (e) {
+        console.error('Failed to parse translation colors', e)
+      }
+    }
+    
+    if (changed) {
+      // Dynamically re-apply colors to existing elements
+      this.observedElements.forEach(element => {
+        const transWrappers = element.querySelectorAll('.translated-text')
+        transWrappers.forEach(wrapper => {
+          const rubys = wrapper.querySelectorAll('ruby.anx-wordwise')
+          rubys.forEach(ruby => {
+            const rt = ruby.querySelector('rt')
+            if (rt) {
+              const minLevel = rt.getAttribute('data-level')
+              if (this.#translationColorEnabled && minLevel && this.#translationLevelColors[minLevel.toLowerCase()]) {
+                rt.style.color = this.#translationLevelColors[minLevel.toLowerCase()]
+                rt.style.fontWeight = 'bold'
+              } else {
+                rt.style.color = 'inherit'
+                rt.style.fontWeight = 'normal'
+              }
+            }
+          })
+        })
+      })
+      this.#updateTranslationDisplay()
+    }
+  }
+
   getTranslationMode() {
     return this.#translationMode
   }
@@ -126,6 +172,22 @@ export class Translator {
     const oldLevel = this.#translationLevel
     this.#translationLevel = level
     if (oldLevel !== level) {
+      const isWordLevel = l => l && l !== 'full'
+      
+      if (isWordLevel(oldLevel) && isWordLevel(level)) {
+        // Both are word levels. No need to clear queues or re-fetch.
+        // Just re-render already translated elements to apply the new visibility filter.
+        this.observedElements.forEach(element => {
+          const data = this.#translatedElements.get(element)
+          if (data && data.translatedText) {
+            this.#applyTranslation(element, data.translatedText)
+          }
+        })
+        // Update display according to translation mode
+        this.#updateTranslationDisplay()
+        return
+      }
+
       // Soft reset: remove visual translations but keep observer alive
       if (this.#batchTimer) {
         clearTimeout(this.#batchTimer)
@@ -156,6 +218,13 @@ export class Translator {
       this.#aiBatchSize = size
     }
   }
+
+  setAiWorkers(n) {
+    if (typeof n === 'number' && n >= 1) {
+      this.#aiWorkers = Math.floor(n)
+    }
+  }
+
 
   onRelocated() {
     if (this.#translationMode === TranslationMode.OFF) return
@@ -272,7 +341,7 @@ export class Translator {
 
   #isWordLevelExpected() {
     return this.#translationMode === TranslationMode.INTERLINEAR &&
-      this.#translationLevel !== 'level0'
+      this.#translationLevel !== 'full'
   }
 
   #hasWordLevelMarkers(text) {
@@ -290,7 +359,7 @@ export class Translator {
       } catch (_) {}
     }
 
-    // Marker format: [word|translation]
+    // Marker format: [word|translation] or [word|translation|level]
     return trimmed.includes('[') && trimmed.includes('|') && trimmed.includes(']')
   }
 
@@ -602,14 +671,27 @@ export class Translator {
     
     const elements = Array.from(batch.keys())
     const texts = Array.from(batch.values())
-    
+
     try {
-      // For both word-level and sentence-level we want to translate as much as possible 
-      // in one go. We try aiBatchSize elements at a time.
       const maxBatchSize = this.#aiBatchSize
-      
-      // Process chunks sequentially to avoid overwhelming the API
-      // Apply translations IMMEDIATELY after each chunk finishes
+      const n = Math.max(1, this.#aiWorkers)
+      // Divide texts into N groups for parallel processing
+      const groupSize = Math.ceil(texts.length / n)
+      const chunkPromises = []
+      for (let i = 0; i < texts.length; i += groupSize) {
+        const chunkTexts = texts.slice(i, i + groupSize)
+        const chunkElements = elements.slice(i, i + groupSize)
+        chunkPromises.push(this.#processChunk(chunkTexts, chunkElements, currentGen, maxBatchSize))
+      }
+      await Promise.all(chunkPromises)
+    } catch (error) {
+      console.warn('Batch translation failed:', error)
+    }
+  }
+
+  // Process a single chunk of elements (sequential batches within the chunk)
+  async #processChunk(texts, elements, currentGen, maxBatchSize) {
+    try {
       for (let start = 0; start < texts.length; start += maxBatchSize) {
         if (this.#generationId !== currentGen) return // aborted by scroll/level change
         const chunkLength = Math.min(maxBatchSize, texts.length - start)
@@ -685,19 +767,7 @@ export class Translator {
         }
       }
     } catch (error) {
-      console.warn('Batch translation failed:', error)
-      
-      // Detailed error in translation marks
-      for (const element of elements) {
-        if (!this.#translatedElements.has(element)) {
-          const fallbackOriginal = batch.get(element) || element.innerText?.trim() || ''
-          this.#translatedElements.set(element, {
-            originalText: fallbackOriginal,
-            translatedText: '[Error: Translation failed]'
-          })
-          this.#applyTranslation(element, '[Error: Translation failed]')
-        }
-      }
+      console.warn('processChunk failed:', error)
     }
   }
 
@@ -724,11 +794,13 @@ export class Translator {
         return
       }
       
-      // Check for marker format: text with [word|translation] annotations
+      // Check for marker format: text with [word|translation] or [word|translation|level] annotations
       if (translatedData.includes('[') && translatedData.includes('|')) {
         const markerPairs = this.#parseMarkerFormat(translatedData)
         if (markerPairs && markerPairs.length > 0) {
-          this.#applyRubyTranslation(element, markerPairs)
+          // Apply level filtering for unified word_wise cache
+          const filteredPairs = this.#filterByLevel(markerPairs, this.#translationLevel)
+          this.#applyRubyTranslation(element, filteredPairs)
           return
         }
       }
@@ -742,15 +814,16 @@ export class Translator {
     this.#applyBlockTranslation(element, translatedData)
   }
 
-  // Parse "[word|translation]" marker format into word pairs
+  // Parse "[word|translation]" or "[word|translation|min_level]" marker format into word pairs
+  // Returns array of [original, translation, minLevel?] triples
   #parseMarkerFormat(text) {
     const pairs = []
-    // Split text by marker pattern, keeping both marked and unmarked parts
     // Refined regex handles:
-    // 1. [word|trans] - valid
+    // 1. [word|trans] or [word|trans|level] - valid
     // 2. [word|trans} - wrong bracket
     // 3. [word|trans - missing bracket (stops at space/end)
-    const regex = /\[([^\[\]|]+)\|((?:[^\[\]\|\}]*?(?=[\]\}]))|[^\[\]\|\} \r\n]*?)([\]\}])?/g
+    // 4. [word|] - empty translation (handles errors from AI like [um|])
+    const regex = /\[([^\[\]|]+)\|([^\[\]|]*)(?:\|\s*([a-z0-9]*)\s*)?[\]\}]?/gi
     let lastIndex = 0
     let match
     
@@ -760,15 +833,14 @@ export class Translator {
         const before = text.substring(lastIndex, match.index)
         before.split(/(\s+)/).forEach(part => {
           if (part.trim()) {
-            pairs.push([part, ''])
+            pairs.push([part, '', null])
           } else if (part) {
-            pairs.push([part, ''])  // preserve whitespace
+            pairs.push([part, '', null])  // preserve whitespace
           }
         })
       }
-      // Add the marked word with its translation
-      // match[1] = original, match[2] = translation
-      pairs.push([match[1], match[2]])
+      // match[1]=original, match[2]=translation, match[3]=minLevel (may be undefined)
+      pairs.push([match[1], match[2], match[3] || null])
       lastIndex = match.index + match[0].length
     }
     
@@ -777,14 +849,30 @@ export class Translator {
       const remaining = text.substring(lastIndex)
       remaining.split(/(\s+)/).forEach(part => {
         if (part.trim()) {
-          pairs.push([part, ''])
+          pairs.push([part, '', null])
         } else if (part) {
-          pairs.push([part, ''])
+          pairs.push([part, '', null])  // preserve whitespace
         }
       })
     }
     
     return pairs.length > 0 ? pairs : null
+  }
+
+  // Filter word pairs by current reader level:
+  // show translation only for words the reader at currentLevel likely doesn't know
+  #filterByLevel(pairs, currentLevel) {
+    if (!currentLevel || currentLevel === 'full' || currentLevel === 'level0') return pairs
+    const levelOrder = ['0', 'a1', 'a2', 'b1', 'b2', 'c1', 'c2']
+    const currentIdx = levelOrder.indexOf(currentLevel.toLowerCase())
+    if (currentIdx < 0) return pairs // unknown level — show everything
+    return pairs.map(([word, trans, minLevel]) => {
+      if (!minLevel) return [word, trans, null] // no level info — always show
+      const minIdx = levelOrder.indexOf(minLevel.toLowerCase())
+      if (minIdx < 0) return [word, trans, minLevel] // unknown minLevel — show
+      // Show translation if reader's level <= min level at which this word is "easy"
+      return minIdx >= currentIdx ? [word, trans, minLevel] : [word, '', minLevel]
+    })
   }
 
   #injectWordWiseStyles(doc) {
@@ -836,10 +924,11 @@ export class Translator {
     wrapper.style.display = 'inline'
     
     for (let i = 0; i < wordPairs.length; i++) {
-      const [original, translation] = wordPairs[i]
+      const [original, translation, minLevel] = wordPairs[i]
       
+      // Empty translations (like [um|] from parser errors) fall back to just the original word
       if (translation && translation.trim()) {
-        // Word with translation — use ruby element
+        // Word with translation — use ruby element (even if translation is empty, it helps layout spacing or highlighting)
         const ruby = document.createElement('ruby')
         ruby.className = 'anx-wordwise'
         ruby.textContent = original
@@ -849,9 +938,20 @@ export class Translator {
         rt.style.fontSize = '0.75em'
         /* Add a bit of space so it doesn't touch the brace */
         rt.style.paddingBottom = '3px'
-        rt.style.color = 'inherit'
+        
+        if (minLevel) {
+          rt.setAttribute('data-level', minLevel)
+        }
+        
+        if (this.#translationColorEnabled && minLevel && this.#translationLevelColors[minLevel.toLowerCase()]) {
+          rt.style.color = this.#translationLevelColors[minLevel.toLowerCase()]
+          rt.style.fontWeight = 'bold'
+        } else {
+          rt.style.color = 'inherit'
+          rt.style.fontWeight = 'normal'
+        }
+        
         rt.style.opacity = '0.85'
-        rt.style.fontWeight = 'normal'
         rt.style.fontStyle = 'normal'
 
         ruby.appendChild(rt)

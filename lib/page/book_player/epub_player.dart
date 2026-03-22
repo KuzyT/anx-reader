@@ -113,8 +113,10 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
   double _accumulatedScrollDelta = 0;
   static const double _scrollThreshold = 50.0;
 
-  // Translation queue lock
-  static Future<void>? _activeTranslationRequest;
+  // Semaphore for N concurrent translation workers
+  static int _activeTranslationWorkers = 0;
+  static int get _maxTranslationWorkers => Prefs().aiTranslateWorkers;
+  static final _translationWaitQueue = <Completer<void>>[];
 
   void _aiDebugLog(String message) {
     if (EnvVar.enableAiConsoleLogs) {
@@ -170,10 +172,28 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
       ''');
   }
 
+  void setAiWorkers(int n) {
+    webViewController.evaluateJavascript(source: '''
+      if (typeof reader.view !== 'undefined' && reader.view.setAiWorkers) {
+        reader.view.setAiWorkers($n);
+      }
+      ''');
+  }
+
+  void setTranslationColors(bool enabled, String colorsJson) {
+    webViewController.evaluateJavascript(source: '''
+      if (typeof reader.view !== 'undefined' && reader.view.setTranslationColors) {
+        reader.view.setTranslationColors($enabled, '$colorsJson');
+      }
+      ''');
+  }
+
   void _applyTranslationSettings() {
     setTranslationLevel(Prefs().translationLevel);
     setAiBatchSize(Prefs().aiBatchSize);
+    setAiWorkers(Prefs().aiTranslateWorkers);
     setTranslationMode(Prefs().getBookTranslationMode(widget.book.id));
+    setTranslationColors(Prefs().translationColorEnabled, jsonEncode(Prefs().translationLevelColors));
   }
 
   Future<void> goToPercentage(double value) async {
@@ -909,13 +929,16 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
         try {
           if (!mounted) return "{}";
           final String textsJsonStr = args[0];
-          final String level = args.length > 1 ? args[1] : 'level0';
+          final String level = args.length > 1 ? args[1] : 'full';
           final List<dynamic> textsList = jsonDecode(textsJsonStr);
           final texts = textsList.map((e) => e.toString()).toList();
           final bookId = widget.book.id;
+          // Use unified 'word_wise' cache key for all interlinear levels (A1-C2)
+          // This allows switching levels without re-translating
+          final cacheLevel = (level != 'full') ? 'word_wise' : 'full';
 
           final cached = await translationCacheDao.getTranslations(
-              bookId, level, texts);
+              bookId, cacheLevel, texts);
           if (!mounted) return "{}";
           return jsonEncode(cached);
         } catch (e) {
@@ -975,7 +998,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
       callback: (args) async {
         try {
           final String textsJsonStr = args[0];
-          final String level = args.length > 1 ? args[1] : 'level0';
+          final String level = args.length > 1 ? args[1] : 'full';
           final String pageInfo = args.length > 2 ? args[2] : '';
           final List<dynamic> textsList = jsonDecode(textsJsonStr);
           final texts = textsList.map((e) => e.toString()).toList();
@@ -985,22 +1008,23 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
           final from = Prefs().fullTextTranslateFrom;
           final to = Prefs().fullTextTranslateTo;
           final bookId = widget.book.id;
+          // Use unified 'word_wise' cache key for all interlinear levels (A1-C2)
+          final cacheLevel = (level != 'full') ? 'word_wise' : 'full';
 
-          // Step 1: Wait in queue to avoid cache race conditions
-          while (_activeTranslationRequest != null) {
-            await _activeTranslationRequest;
+          // Step 1: Wait until a worker slot is available
+          while (_activeTranslationWorkers >= _maxTranslationWorkers) {
+            final waiter = Completer<void>();
+            _translationWaitQueue.add(waiter);
+            await waiter.future;
           }
-          if (!mounted) return jsonEncode(<String>[]);
-
-          final completer = Completer<void>();
-          _activeTranslationRequest = completer.future;
+          _activeTranslationWorkers++;
 
           try {
             if (!mounted) return jsonEncode(<String>[]);
 
-            // Step 2: Check translation cache AFTER acquiring lock
+            // Step 2: Check translation cache AFTER acquiring slot
             final cachedRaw =
-                await translationCacheDao.getTranslations(bookId, level, texts);
+                await translationCacheDao.getTranslations(bookId, cacheLevel, texts);
             if (!mounted) return jsonEncode(<String>[]);
 
             bool hasWordLevelMarkers(String value) {
@@ -1091,10 +1115,10 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
                 newTranslations[originalText] = resultText;
               }
 
-              // Step 4: Save new translations to cache
+              // Step 4: Save new translations to cache (using unified key)
               if (newTranslations.isNotEmpty) {
                 await translationCacheDao.insertTranslations(
-                    bookId, level, newTranslations);
+                    bookId, cacheLevel, newTranslations);
                 if (!mounted) return jsonEncode(<String>[]);
               }
             }
@@ -1110,8 +1134,10 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
                 '✅ [TRANSLATE BATCH RESPONSE] ${results.length} results: ${results.map((r) => '"$r"').join(', ')}');
             return jsonEncode(results);
           } finally {
-            _activeTranslationRequest = null;
-            completer.complete();
+            _activeTranslationWorkers--;
+            if (_translationWaitQueue.isNotEmpty) {
+              _translationWaitQueue.removeAt(0).complete();
+            }
           }
         } catch (e) {
           _aiDebugLog('❌ [TRANSLATE BATCH ERROR] $e');

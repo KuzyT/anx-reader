@@ -1,5 +1,35 @@
 **English** | [简体中文](README_zh.md) | [Türkçe](README_tr.md) | [Русский](README_RU.md)
 
+## Why this fork exists
+
+I wanted a reader app with this exact translation workflow and even considered building one from scratch.  
+Then I found **Anx Reader** — I really liked it. It was already close to what I wanted, but not exactly the same.  
+So I made this fork and shaped it into the version I had in mind, with help from **Antigravity** and **Codex**.
+
+## What this fork adds
+
+- ⚡ Batch AI translation for faster page/chapter processing
+- 📘 Interlinear word-by-word mode with markers like `[word|translation|min_level]`
+- 🎯 CEFR-aware filtering (`0`, `A1`, `A2`, `B1`, `B2`, `C1`, `C2`) to show only needed word hints
+- 🎨 Optional level-based colorization of translated words
+- 🧩 Custom color palette per CEFR level (with reset to defaults)
+- 🧠 Translation cache (sentence + word-level cache paths)
+- 🧹 Cache clear options (current page / chapter / whole book)
+- 🌍 Per-book source language override + auto-detect from current chapter
+- 🛠 Optional AI CEFR refinement for non-AI translators (global + per-book override)
+- 📊 AI status overlay with logs/request history
+- 🔁 Retry/backoff for 429 rate limits
+- ⚙️ Configurable batch size and worker count
+
+## Screenshot
+
+![Interlinear Translation Example](./docs/images/interlinear-pt.png)
+
+> ⚠️ **Fork status:** This version is still relatively early and may be unstable in some scenarios.  
+> I primarily built it to a “good enough for my own daily use” state.  
+> I’m publishing it to preserve the concept and implementation publicly.  
+> If issues come up, I’ll iterate and fix them.
+
 <br>
 
 <p align="center">

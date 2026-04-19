@@ -446,6 +446,30 @@ export class Translator {
     }
   }
 
+  // Like retranslateAll but keeps existing visual translations visible while re-fetching.
+  // Used after background AI level refinement so the current page doesn't flicker.
+  softRetranslateAll() {
+    this.#generationId++
+    if (this.#batchTimer) {
+      clearTimeout(this.#batchTimer)
+      this.#batchTimer = null
+    }
+    this.#pendingQueue.clear()
+
+    // Do NOT remove existing .translated-text nodes — they stay visible until
+    // each element's new translation arrives and #applyTranslation swaps them in.
+    this.#translatedElements = new WeakMap()
+    this.#retryAttempts = new WeakMap()
+    this.#rateLimitRetryAttempts = new WeakMap()
+    this.#blockedUntilRelocation = new WeakSet()
+
+    if (this.#translationMode !== TranslationMode.OFF) {
+      this.#forceTranslateVisibleElements().catch(error =>
+        console.warn('Soft retranslate after level refine failed:', error)
+      )
+    }
+  }
+
   getVisibleOriginalTexts() {
     const texts = new Set()
 

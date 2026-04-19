@@ -1040,8 +1040,8 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
 (() => {
   const reader = window.reader;
   const translator = reader && reader.view && reader.view.translator;
-  if (translator && typeof translator.retranslateAll === 'function') {
-    translator.retranslateAll();
+  if (translator && typeof translator.softRetranslateAll === 'function') {
+    translator.softRetranslateAll();
   }
 })()
 ''');

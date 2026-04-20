@@ -365,6 +365,7 @@ export class Translator {
 
   #markNoTranslation(element, originalText) {
     if (this.#translatedElements.has(element)) return
+    this.#rememberOriginalText(element, originalText)
     this.#translatedElements.set(element, {
       originalText: originalText,
       translatedText: '',
@@ -497,7 +498,19 @@ export class Translator {
     if (data && data.originalText) {
       return data.originalText
     }
+    // Fallback to stashed attribute — needed after softRetranslateAll()
+    // clears #translatedElements while .translated-text stays in the DOM:
+    // reading innerText at that point would include the ruby translations.
+    const stashed = element.getAttribute('data-anx-original-text')
+    if (stashed) return stashed
     return element.innerText?.trim()
+  }
+
+  #rememberOriginalText(element, originalText) {
+    if (!originalText) return
+    if (element.getAttribute('data-anx-original-text') !== originalText) {
+      element.setAttribute('data-anx-original-text', originalText)
+    }
   }
 
   #walkTextNodes(root, rejectTags = ['pre', 'code', 'math', 'style', 'script']) {
@@ -545,11 +558,16 @@ export class Translator {
     if (this.#translationMode === TranslationMode.OFF) return
     if (this.#translatedElements.has(element)) return
     if (this.#blockedUntilRelocation.has(element)) return
-    
+
     if (!this.#isWithinTranslateWindow(element)) return
 
-    const text = element.innerText?.trim()
+    // Must use #getElementOriginalText (not element.innerText): after
+    // softRetranslateAll() the DOM still contains .translated-text nodes,
+    // so innerText would return a mix of original + ruby translations.
+    const text = this.#getElementOriginalText(element)
     if (!text) return
+    // Stash for later retrievals even on the first translation pass
+    this.#rememberOriginalText(element, text)
     
     // Check local cache instantly first before adding to AI processing queue
     try {
@@ -575,6 +593,7 @@ export class Translator {
           // Treat invalid/stale cache as miss so it can be repaired by AI.
           // Continue below to enqueue for fresh translation.
         } else {
+          this.#rememberOriginalText(element, text)
           this.#translatedElements.set(element, {
             originalText: text,
             translatedText: trimmedCached
@@ -779,11 +798,12 @@ export class Translator {
             }
             
             // Mark as translated
+            this.#rememberOriginalText(element, originalText)
             this.#translatedElements.set(element, {
               originalText: originalText,
               translatedText: translatedText
             })
-            
+
             this.#applyTranslation(element, translatedText)
           }
         } catch (error) {
@@ -1150,10 +1170,13 @@ export class Translator {
     // Queue all visible untranslated elements for batch translation
     this.observedElements.forEach(element => {
       const isVisible = this.#isWithinTranslateWindow(element)
-      
+
       if (isVisible && !this.#translatedElements.has(element)) {
-        const text = element.innerText?.trim()
+        // Use #getElementOriginalText to survive softRetranslateAll:
+        // otherwise innerText would return the currently-rendered ruby mix.
+        const text = this.#getElementOriginalText(element)
         if (text) {
+          this.#rememberOriginalText(element, text)
           this.#pendingQueue.set(element, text)
         }
       } else if (isVisible && this.#translatedElements.has(element)) {

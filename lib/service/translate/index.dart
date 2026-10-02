@@ -11,8 +11,10 @@ import 'package:anx_reader/service/translate/microsoft_api.dart';
 import 'package:anx_reader/service/translate/web_view.dart';
 import 'package:anx_reader/utils/env_var.dart';
 import 'package:anx_reader/utils/log/common.dart';
+import 'package:anx_reader/utils/ai_reasoning_parser.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 enum TranslateService {
   bingWeb,
@@ -86,6 +88,7 @@ abstract class TranslateServiceProvider {
     LangListEnum from,
     LangListEnum to, {
     String? contextText,
+    WidgetRef? ref,
   });
 
   /// Returns a stream of translation results.
@@ -95,6 +98,7 @@ abstract class TranslateServiceProvider {
     LangListEnum to, {
     String? contextText,
     bool isFullText = false,
+    WidgetRef? ref,
   });
 
   /// Translate text only (no widget), with retry logic.
@@ -104,6 +108,7 @@ abstract class TranslateServiceProvider {
     LangListEnum to, {
     String? contextText,
     bool isFullText = false,
+    WidgetRef? ref,
   }) async {
     const int maxRetries = 2;
 
@@ -116,8 +121,9 @@ abstract class TranslateServiceProvider {
           to,
           contextText: contextText,
           isFullText: isFullText,
+          ref: ref,
         )) {
-          lastResult = result;
+          lastResult = splitReasoningEnvelope(result).answerContent;
         }
 
         if (lastResult != null &&
@@ -142,6 +148,21 @@ abstract class TranslateServiceProvider {
     }
 
     throw Exception('Translation failed after all retry attempts');
+  }
+
+  /// Translate a batch of texts. Default implementation calls translateTextOnly
+  /// for each text in parallel. AI provider overrides with single-request batch.
+  Future<List<String>> translateBatch(
+    List<String> texts,
+    LangListEnum from,
+    LangListEnum to, {
+    String level = 'full',
+    String? pageInfo,
+    WidgetRef? ref,
+  }) async {
+    final futures = texts.map((text) =>
+        translateTextOnly(text, from, to, isFullText: true, ref: ref));
+    return await Future.wait(futures);
   }
 
   /// Returns the current configuration.
@@ -193,7 +214,7 @@ abstract class TranslateServiceProvider {
 // ============================================================================
 
 Widget translateText(String text,
-    {TranslateService? service, String? contextText}) {
+    {TranslateService? service, String? contextText, WidgetRef? ref}) {
   service ??= Prefs().translateService;
   final from = Prefs().translateFrom;
   final to = Prefs().translateTo;
@@ -203,6 +224,7 @@ Widget translateText(String text,
     from,
     to,
     contextText: contextText,
+    ref: ref,
   );
 }
 
@@ -221,7 +243,7 @@ void saveTranslateServiceConfig(
 }
 
 Future<String> translateTextOnly(String text,
-    {TranslateService? service, String? contextText}) async {
+    {TranslateService? service, String? contextText, WidgetRef? ref}) async {
   service ??= Prefs().translateService;
   final from = Prefs().translateFrom;
   final to = Prefs().translateTo;
@@ -231,5 +253,6 @@ Future<String> translateTextOnly(String text,
     from,
     to,
     contextText: contextText,
+    ref: ref,
   );
 }

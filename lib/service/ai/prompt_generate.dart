@@ -142,6 +142,60 @@ PromptTemplatePayload generatePromptFullTextTranslate(
   );
 }
 
+PromptTemplatePayload generatePromptTranslateBatch(
+    String textsJson, String toLocale, String fromLocale) {
+  final prompt = Prefs().getAiPrompt(AiPrompts.translateBatch);
+  final normalized = _normalizePrompt(prompt);
+  final template = ChatPromptTemplate.fromPromptMessages([
+    HumanChatMessagePromptTemplate.fromTemplate(normalized),
+  ]);
+  return PromptTemplatePayload(
+    template: template,
+    variables: {
+      'texts': textsJson,
+      'to_locale': toLocale,
+      'from_locale': fromLocale,
+    },
+    identifier: AiPrompts.translateBatch,
+  );
+}
+
+PromptTemplatePayload generatePromptTranslateBatchWordLevel(
+    String textsJson, String toLocale, String fromLocale, String level) {
+  final prompt = Prefs().getAiPrompt(AiPrompts.translateBatchWordLevel);
+  final normalized = _normalizePrompt(prompt);
+  final template = ChatPromptTemplate.fromPromptMessages([
+    HumanChatMessagePromptTemplate.fromTemplate(normalized),
+  ]);
+  return PromptTemplatePayload(
+    template: template,
+    variables: {
+      'texts': textsJson,
+      'to_locale': toLocale,
+      'from_locale': fromLocale,
+      'level': level.toUpperCase(),
+    },
+    identifier: AiPrompts.translateBatchWordLevel,
+  );
+}
+
+PromptTemplatePayload generatePromptClassifyWordLevels(
+    String wordsJson, String fromLocale) {
+  final prompt = Prefs().getAiPrompt(AiPrompts.classifyWordLevels);
+  final normalized = _normalizePrompt(prompt);
+  final template = ChatPromptTemplate.fromPromptMessages([
+    HumanChatMessagePromptTemplate.fromTemplate(normalized),
+  ]);
+  return PromptTemplatePayload(
+    template: template,
+    variables: {
+      'words': wordsJson,
+      'from_locale': fromLocale,
+    },
+    identifier: AiPrompts.classifyWordLevels,
+  );
+}
+
 String _normalizePrompt(String template) {
   return template.replaceAll('{{', '{').replaceAll('}}', '}');
 }

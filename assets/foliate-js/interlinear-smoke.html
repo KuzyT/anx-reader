@@ -1,0 +1,67 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Interlinear compatibility checks</title>
+<pre id="results">Running…</pre>
+<script type="module">
+import { Translator, TranslationMode } from './src/translator.js'
+const checks = []
+const check = (condition, message) => {
+  if (!condition) throw new Error(message)
+  checks.push(message)
+}
+// Keep the observer deterministic; force-translate exercises the real batch path.
+window.IntersectionObserver = class { observe() {} disconnect() {} unobserve() {} }
+async function fixture(handler) {
+  const frame = document.createElement('iframe')
+  frame.style.cssText = 'width:800px;height:400px;display:block'
+  document.body.append(frame)
+  frame.contentDocument.body.innerHTML = '<p>Olá, mundo!</p>'
+  const translator = new Translator()
+  window.flutter_inappwebview = { callHandler: handler }
+  translator.observeDocument(frame.contentDocument)
+  translator.setTranslationLevel('a1')
+  return { translator, frame, p: frame.contentDocument.querySelector('p') }
+}
+try {
+  const originals = []
+  const { translator, frame, p } = await fixture(async (name, texts) => {
+    if (name === 'translateBatch') {
+      originals.push(JSON.parse(texts))
+      return JSON.stringify(['[Olá|Привет|a1], [mundo|мир|b1]!'])
+    }
+    return '{}'
+  })
+  await translator.setTranslationMode(TranslationMode.INTERLINEAR)
+  check(p.querySelectorAll('ruby rt').length === 2, 'two interlinear hints rendered')
+  translator.setTranslationColors(true, JSON.stringify({ a1: '#008000', b1: '#0000ff' }))
+  check(p.querySelector('rt[data-level="a1"]').style.color === 'rgb(0, 128, 0)', 'CEFR color restored')
+  translator.setTranslationLevel('b1')
+  check(p.querySelectorAll('ruby rt').length === 1, 'CEFR hides easy hints without another request')
+  check(originals.length === 1, 'CEFR reuses translated text')
+  translator.setTranslationLevel('a1')
+  translator.softRetranslateAll()
+  await new Promise(resolve => setTimeout(resolve, 50))
+  check(originals.length === 2 && originals[1][0] === 'Olá, mundo!', 'retranslation sends original, excluding hints')
+  await translator.setTranslationMode(TranslationMode.OFF)
+  check(p.innerText === 'Olá, mundo!', 'off mode restores visible original')
+  translator.destroy()
+  check(p.textContent === 'Olá, mundo!' && !p.querySelector('.translated-text'), 'destroy preserves original DOM')
+  frame.remove()
+
+  let resolveBatch
+  const pending = new Promise(resolve => { resolveBatch = resolve })
+  const second = await fixture(async name => name === 'translateBatch' ? pending : '{}')
+  const inFlight = second.translator.setTranslationMode(TranslationMode.INTERLINEAR)
+  await Promise.resolve()
+  second.translator.cancelAndClear()
+  resolveBatch(JSON.stringify(['[Olá|Привет|a1], [mundo|мир|b1]!']))
+  await inFlight
+  check(!second.p.querySelector('.translated-text'), 'cancelled generation never applies a late result')
+  second.translator.destroy()
+  second.frame.remove()
+  window.testResult = { passed: true, checks }
+} catch (error) {
+  window.testResult = { passed: false, checks, error: error.message }
+}
+document.querySelector('#results').textContent = JSON.stringify(window.testResult, null, 2)
+</script>

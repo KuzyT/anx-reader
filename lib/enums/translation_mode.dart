@@ -2,7 +2,8 @@ enum TranslationModeEnum {
   off('off'),
   translationOnly('translation-only'),
   originalOnly('original-only'),
-  bilingual('bilingual');
+  bilingual('bilingual'),
+  interlinear('interlinear');
 
   const TranslationModeEnum(this.code);
 
@@ -25,6 +26,8 @@ enum TranslationModeEnum {
         return 'Original Only';
       case TranslationModeEnum.bilingual:
         return 'Bilingual';
+      case TranslationModeEnum.interlinear:
+        return 'Interlinear';
     }
   }
 }

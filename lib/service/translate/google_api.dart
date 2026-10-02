@@ -5,6 +5,7 @@ import 'package:anx_reader/service/translate/index.dart';
 import 'package:anx_reader/utils/log/common.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:anx_reader/config/shared_preference_provider.dart';
 
 const _urlGoogleApi =
@@ -25,6 +26,7 @@ class GoogleApiTranslateProvider extends TranslateServiceProvider {
     LangListEnum to, {
     String? contextText,
     bool isFullText = false,
+    WidgetRef? ref,
   }) {
     return convertStreamToWidget(
       translateStream(text, from, to, contextText: contextText),
@@ -38,6 +40,7 @@ class GoogleApiTranslateProvider extends TranslateServiceProvider {
     LangListEnum to, {
     String? contextText,
     bool isFullText = false,
+    WidgetRef? ref,
   }) async* {
     try {
       final config = getConfig();

@@ -76,8 +76,11 @@ export class View extends HTMLElement {
   history = new History()
   #lastCfi = null
   #translator = new Translator()
+  get translator() { return this.#translator }
+
   constructor() {
     super()
+    window.translator = this.#translator
     this.history.addEventListener('popstate', ({ detail }) => {
       const resolved = this.resolveNavigation(detail.state)
       this.renderer.goTo(resolved)
@@ -193,6 +196,9 @@ export class View extends HTMLElement {
       this.#lastCfi = cfi
       this.#emit('relocate', this.lastLocation)
     }
+    
+    // Notify translator of scroll/relocate for debouncing
+    this.#translator?.onRelocated?.()
   }
 
   #onLoad({ doc, index }) {
@@ -595,6 +601,30 @@ export class View extends HTMLElement {
   
   getTranslationMode() {
     return this.#translator.getTranslationMode()
+  }
+
+  setTranslationLevel(level) {
+    this.#translator.setTranslationLevel(level)
+  }
+
+  setTranslationColors(enabled, jsonColors) {
+    this.#translator.setTranslationColors(enabled, jsonColors)
+  }
+
+  setAiBatchSize(size) {
+    this.#translator.setAiBatchSize(size)
+  }
+
+  setAiWorkers(n) {
+    this.#translator.setAiWorkers(n)
+  }
+
+  getTranslationLevel() {
+    return this.#translator.getTranslationLevel()
+  }
+
+  cancelAndClear() {
+    this.#translator?.cancelAndClear?.()
   }
   
   clearTranslations() {

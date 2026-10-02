@@ -5,7 +5,10 @@ enum AiPrompts {
   summaryThePreviousContent,
   translate,
   fullTextTranslate,
+  translateBatch,
+  translateBatchWordLevel,
   mindmap,
+  classifyWordLevels,
 }
 
 extension AiPromptsJson on AiPrompts {
@@ -117,6 +120,59 @@ When acting as a translator (different languages):
 - Encyclopedia: add one background detail (culture, setting, concept) that aids understanding.
       ''';
 
+      case AiPrompts.translateBatch:
+        return '''
+Translate the following JSON array of texts strictly from {{from_locale}} to {{to_locale}}.
+Do not use any other language for the translation.
+Return ONLY a valid JSON array of translated strings in the exact same order. No extra text, no explanations, no markdown.
+Input: {{texts}}
+        ''';
+
+      case AiPrompts.translateBatchWordLevel:
+        return '''
+You are a language learning assistant building a translation cache.
+
+Task: Return the ORIGINAL text but annotate EVERY meaningful word by wrapping it as [word|translation|min_level].
+- "word" — the original word exactly as it appears in the text
+- "translation" — the translation of that word in {{to_locale}}
+- "min_level" — the CEFR level at which a learner would first need help with this word:
+    0  = below A1 (so basic that even a complete beginner struggles — e.g. very short common words like "go", "big", "one")
+    a1 = very common, everyday words a beginner learns first
+    a2 = elementary words
+    b1 = intermediate words
+    b2 = upper-intermediate words
+    c1 = advanced words
+    c2 = very rare, academic or highly specialized words
+
+Skip ONLY:
+- Articles (a, an, the, um, uma, o, os, as…) and punctuation
+- Roman numerals used as chapter numbers, section markers, or ordinals
+  (e.g. "I", "II", "IV", "M", "XIV" — skip when used as numerals, not words)
+- Common honorifics and abbreviations
+  (e.g. "Mr.", "Mrs.", "Dr.", "Jr.", "Sr.", "Prof.", etc.)
+- Proper nouns that are purely phonetic with no lexical meaning
+  (e.g. "Harry", "Hermione", "London", "Dursley" — skip these)
+
+BUT annotate proper nouns that are transparently derived from real words:
+  (e.g. "Longbottom" → [Longbottom|длинное дно (long+bottom)|b1],
+        "Goodman" → [Goodman|хороший человек (good+man)|a1])
+
+Return a JSON array of annotated strings (one per input string).
+
+Example (translating to {{to_locale}}):
+Input: ["The astronomer observed a strange celestial phenomenon near Goodman street", "I", "Mr.", "XIV"]
+Output: ["The [astronomer|астроном|a2] [observed|наблюдал|a1] a [strange|странный|a1] [celestial|небесный|b2] [phenomenon|явление|b1] [near|рядом с|a1] [Goodman|хороший человек (good+man)|a1] [street|улица|0]", "I", "Mr.", "XIV"]
+
+IMPORTANT:
+1. Annotate ALL meaningful words — this is a full translation cache, not filtered output.
+2. CRITICAL: All translations inside brackets MUST be strictly in {{to_locale}}.
+3. Do NOT skip words because they seem "easy" — assign them the correct min_level instead.
+4. Skipped items (roman numerals, abbreviations, proper phonetic names) must be returned AS-IS, unchanged.
+5. Return ONLY a valid JSON array, no extra text.
+
+Input: {{texts}}
+        ''';
+
       case AiPrompts.mindmap:
         return '''
 You are the Mindmap Architect for Anx Reader. Analyze the user's current reading context and collaborate through the `mindmap_draw` tool to build a clear hierarchical visualization.
@@ -140,6 +196,19 @@ After the tool call, summarize the structure in 3 bullet sentences highlighting:
 1. Overall framing of the mind map
 2. Key branches or clusters
 3. Notable insights or tensions revealed
+        ''';
+
+      case AiPrompts.classifyWordLevels:
+        return '''
+You are assigning CEFR levels to vocabulary items.
+
+Rules:
+- Output ONLY valid JSON.
+- Input is a JSON array of words: {{words}}
+- Source language is {{from_locale}}
+- Return a JSON object where each key is the original word and value is one of:
+  "0", "a1", "a2", "b1", "b2", "c1", "c2", or null if uncertain.
+- Do not translate. Do not add commentary.
         ''';
     }
   }

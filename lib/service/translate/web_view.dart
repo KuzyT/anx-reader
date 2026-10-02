@@ -4,6 +4,7 @@ import 'package:anx_reader/service/translate/index.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import 'package:url_launcher/url_launcher.dart';
@@ -20,6 +21,7 @@ abstract class WebViewTranslateProvider extends TranslateServiceProvider {
     LangListEnum to, {
     String? contextText,
     bool isFullText = false,
+    WidgetRef? ref,
   }) {
     final url = getUrl(text, from, to);
     return SizedBox(
@@ -71,6 +73,7 @@ abstract class WebViewTranslateProvider extends TranslateServiceProvider {
     LangListEnum to, {
     String? contextText,
     bool isFullText = false,
+    WidgetRef? ref,
   }) async* {
     // WebView providers do not support stream translation
     yield "...";
@@ -83,6 +86,7 @@ abstract class WebViewTranslateProvider extends TranslateServiceProvider {
     LangListEnum to, {
     String? contextText,
     bool isFullText = false,
+    WidgetRef? ref,
   }) async {
     // WebView providers do not support text-only translation
     return "";

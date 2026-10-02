@@ -14,6 +14,7 @@ import 'package:anx_reader/enums/sort_field.dart';
 import 'package:anx_reader/enums/sort_order.dart';
 import 'package:anx_reader/enums/sync_protocol.dart';
 import 'package:anx_reader/enums/translation_mode.dart';
+import 'package:anx_reader/enums/translation_level.dart';
 import 'package:anx_reader/enums/writing_mode.dart';
 import 'package:anx_reader/enums/text_alignment.dart';
 import 'package:anx_reader/enums/ai_panel_position.dart';
@@ -73,6 +74,11 @@ class Prefs extends ChangeNotifier {
   static const String _statisticsDashboardTilesKey = 'statisticsDashboardTiles';
   static const String _enabledAiToolsKey = 'enabledAiTools';
   static const String _userPromptsKey = 'userPrompts';
+  static const Set<String> _bookAiRefineLevelModes = {
+    'inherit',
+    'enabled',
+    'disabled',
+  };
 
   Future<void> initPrefs() async {
     prefs = await SharedPreferences.getInstance();
@@ -673,6 +679,76 @@ class Prefs extends ChangeNotifier {
     return prefs.getInt('aiRpm') ?? 0;
   }
 
+  TranslationLevelEnum get translationLevel {
+    return TranslationLevelEnum.fromCode(
+        prefs.getString('translationLevel') ?? 'full');
+  }
+
+  set translationLevel(TranslationLevelEnum level) {
+    prefs.setString('translationLevel', level.code);
+    notifyListeners();
+  }
+
+  int get aiBatchSize {
+    return prefs.getInt('aiBatchSize') ?? 30;
+  }
+
+  set aiBatchSize(int size) {
+    prefs.setInt('aiBatchSize', size);
+    notifyListeners();
+  }
+
+  int get aiTranslateWorkers {
+    return prefs.getInt('aiTranslateWorkers') ?? 1;
+  }
+
+  set aiTranslateWorkers(int workers) {
+    prefs.setInt('aiTranslateWorkers', workers);
+    notifyListeners();
+  }
+
+  bool get aiRefineWordLevelsGlobal {
+    return prefs.getBool('aiRefineWordLevelsGlobal') ?? false;
+  }
+
+  set aiRefineWordLevelsGlobal(bool enabled) {
+    prefs.setBool('aiRefineWordLevelsGlobal', enabled);
+    notifyListeners();
+  }
+
+  bool get translationColorEnabled {
+    return prefs.getBool('translationColorEnabled') ?? false;
+  }
+
+  set translationColorEnabled(bool enabled) {
+    prefs.setBool('translationColorEnabled', enabled);
+    notifyListeners();
+  }
+
+  Map<String, String> get translationLevelColors {
+    final str = prefs.getString('translationLevelColors');
+    if (str != null && str.isNotEmpty) {
+      try {
+        final Map<String, dynamic> decoded = jsonDecode(str);
+        return decoded.map((key, value) => MapEntry(key, value.toString()));
+      } catch (_) {}
+    }
+    return {
+      "0": "#2D2D2D",
+      "a1": "#1A7A3C",
+      "a2": "#1A7575",
+      "b1": "#1655A8",
+      "b2": "#6B1FA8",
+      "c1": "#8F4700",
+      "c2": "#A81A1A"
+    };
+  }
+
+  set translationLevelColors(Map<String, String> colors) {
+    prefs.setString('translationLevelColors', jsonEncode(colors));
+    notifyListeners();
+  }
+
   // set convertChineseMode(ConvertChineseMode mode) {
   //   prefs.setString('convertChineseMode', mode.name);
   //   notifyListeners();
@@ -1076,6 +1152,15 @@ class Prefs extends ChangeNotifier {
 
   bool get showActionLabels {
     return prefs.getBool('showActionLabels') ?? true;
+  }
+
+  set showAiTranslationStatus(bool status) {
+    prefs.setBool('showAiTranslationStatus', status);
+    notifyListeners();
+  }
+
+  bool get showAiTranslationStatus {
+    return prefs.getBool('showAiTranslationStatus') ?? false;
   }
 
   set pageTurnMode(String mode) {
@@ -1618,6 +1703,101 @@ class Prefs extends ChangeNotifier {
       modes[bookIdStr] = mode;
     }
     bookTranslationModes = modes;
+  }
+
+  Map<String, String> get bookAiRefineWordLevelsModes {
+    final modesJson = prefs.getString('bookAiRefineWordLevelsModes');
+    if (modesJson == null) return {};
+
+    try {
+      final decoded = jsonDecode(modesJson);
+      if (decoded is! Map<String, dynamic>) return {};
+
+      final map = <String, String>{};
+      decoded.forEach((key, value) {
+        final mode = value?.toString() ?? '';
+        if (mode.isNotEmpty) {
+          map[key] = mode;
+        }
+      });
+      return map;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  set bookAiRefineWordLevelsModes(Map<String, String> modes) {
+    prefs.setString('bookAiRefineWordLevelsModes', jsonEncode(modes));
+    notifyListeners();
+  }
+
+  String getBookAiRefineWordLevelsMode(int bookId) {
+    final mode = bookAiRefineWordLevelsModes[bookId.toString()] ?? 'inherit';
+    if (!_bookAiRefineLevelModes.contains(mode)) {
+      return 'inherit';
+    }
+    return mode;
+  }
+
+  void setBookAiRefineWordLevelsMode(int bookId, String mode) {
+    final modes = Map<String, String>.from(bookAiRefineWordLevelsModes);
+    final key = bookId.toString();
+    if (!_bookAiRefineLevelModes.contains(mode) || mode == 'inherit') {
+      modes.remove(key);
+    } else {
+      modes[key] = mode;
+    }
+    bookAiRefineWordLevelsModes = modes;
+  }
+
+  bool isAiRefineWordLevelsEnabledForBook(int bookId) {
+    final mode = getBookAiRefineWordLevelsMode(bookId);
+    if (mode == 'enabled') return true;
+    if (mode == 'disabled') return false;
+    return aiRefineWordLevelsGlobal;
+  }
+
+  Map<String, String> get bookInterlinearSourceLangs {
+    final langsJson = prefs.getString('bookInterlinearSourceLangs');
+    if (langsJson == null) return {};
+
+    try {
+      final decoded = jsonDecode(langsJson);
+      if (decoded is! Map<String, dynamic>) return {};
+
+      final map = <String, String>{};
+      decoded.forEach((key, value) {
+        final code = value?.toString() ?? '';
+        if (code.isNotEmpty) {
+          map[key] = code;
+        }
+      });
+      return map;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  set bookInterlinearSourceLangs(Map<String, String> langs) {
+    prefs.setString('bookInterlinearSourceLangs', jsonEncode(langs));
+    notifyListeners();
+  }
+
+  LangListEnum? getBookInterlinearSourceLangOverride(int bookId) {
+    final code = bookInterlinearSourceLangs[bookId.toString()];
+    if (code == null || code.isEmpty) return null;
+    return getLang(code);
+  }
+
+  void setBookInterlinearSourceLangOverride(int bookId, LangListEnum? lang) {
+    final langs = Map<String, String>.from(bookInterlinearSourceLangs);
+    final key = bookId.toString();
+    if (lang == null) {
+      langs.remove(key);
+    } else {
+      langs[key] = lang.code;
+    }
+    bookInterlinearSourceLangs = langs;
   }
 
   bool get allowMixWithOtherAudio {

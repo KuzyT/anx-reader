@@ -9,6 +9,7 @@ import 'package:anx_reader/widgets/settings/settings_section.dart';
 import 'package:anx_reader/widgets/settings/settings_tile.dart';
 import 'package:anx_reader/widgets/settings/settings_title.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 
 class TranslateSetting extends StatefulWidget {
@@ -362,16 +363,17 @@ class TranslateLangPicker extends StatelessWidget {
   }
 }
 
-class TranslateSettingItem extends StatefulWidget {
+class TranslateSettingItem extends ConsumerStatefulWidget {
   const TranslateSettingItem({super.key, required this.service});
 
   final TranslateService service;
 
   @override
-  State<TranslateSettingItem> createState() => _TranslateSettingItemState();
+  ConsumerState<TranslateSettingItem> createState() =>
+      _TranslateSettingItemState();
 }
 
-class _TranslateSettingItemState extends State<TranslateSettingItem> {
+class _TranslateSettingItemState extends ConsumerState<TranslateSettingItem> {
   bool isExpanded = false;
   static const testText = "Hello, world!";
   static const languageTextStyle = TextStyle(
@@ -489,7 +491,7 @@ class _TranslateSettingItemState extends State<TranslateSettingItem> {
                                         const Text(testText),
                                         const Icon(Icons.arrow_downward),
                                         translateText(testText,
-                                            service: widget.service),
+                                            service: widget.service, ref: ref),
                                       ],
                                     ),
                                   ),

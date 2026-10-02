@@ -30,6 +30,8 @@ enum LangListEnum {
   norwegian('nb', 'Norsk Bokmål'),
   polish('pl', 'Polski'),
   portuguese('pt', 'Português'),
+  portuguesePortugal('pt-PT', 'Português (Portugal)'),
+  portugueseBrazil('pt-BR', 'Português (Brasil)'),
   romanian('ro', 'Română'),
   russian('ru', 'Русский'),
   slovak('sk', 'Slovenčina'),

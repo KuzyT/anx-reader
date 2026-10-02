@@ -13,7 +13,7 @@ import 'package:path/path.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 // Current app database version
-const int currentDbVersion = 7;
+const int currentDbVersion = 8;
 
 const createBookSQL = '''
 CREATE TABLE tb_books (
@@ -97,6 +97,18 @@ CREATE TABLE tb_groups (
 )
 ''';
 
+const createTranslationCacheSQL = '''
+CREATE TABLE tb_translation_cache (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  book_id INTEGER NOT NULL,
+  level TEXT NOT NULL,
+  original_text TEXT NOT NULL,
+  translated_text TEXT NOT NULL,
+  create_time TEXT,
+  UNIQUE(book_id, level, original_text)
+)
+''';
+
 class DBHelper {
   static final DBHelper _instance = DBHelper._internal();
   static Database? _database;
@@ -126,7 +138,7 @@ class DBHelper {
           path,
           version: dbVersion,
           onCreate: (db, version) async {
-            onUpgradeDatabase(db, 0, version);
+            await onUpgradeDatabase(db, 0, version);
           },
           onUpgrade: onUpgradeDatabase,
         );
@@ -144,7 +156,7 @@ class DBHelper {
           options: OpenDatabaseOptions(
             version: dbVersion,
             onCreate: (db, version) async {
-              onUpgradeDatabase(db, 0, version);
+              await onUpgradeDatabase(db, 0, version);
             },
             onUpgrade: onUpgradeDatabase,
           ),
@@ -380,13 +392,14 @@ class DBHelper {
       case 3:
         // remove former book style
         Prefs().removeBookStyle();
-        bookDao.selectBooks().then((books) {
-          for (var book in books) {
-            if (!File(book.coverFullPath).existsSync()) {
-              resetBookCover(book);
+        if (oldVersion != 0)
+          bookDao.selectBooks().then((books) {
+            for (var book in books) {
+              if (!File(book.coverFullPath).existsSync()) {
+                resetBookCover(book);
+              }
             }
-          }
-        });
+          });
         continue case4;
       case4:
       case 4:
@@ -425,6 +438,11 @@ class DBHelper {
             VALUES (?, '...', 0, datetime('now'), datetime('now'))
           ''', [groupId]);
         }
+        continue case7;
+      case7:
+      case 7:
+        // Add translation cache table
+        await db.execute(createTranslationCacheSQL);
     }
 
     if (oldVersion != 0 && Prefs().webdavStatus) {

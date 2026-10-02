@@ -7,6 +7,7 @@ import 'package:anx_reader/config/shared_preference_provider.dart';
 import 'package:anx_reader/dao/book.dart';
 import 'package:anx_reader/dao/book_note.dart';
 import 'package:anx_reader/dao/translation_cache.dart';
+import 'package:anx_reader/dao/vocabulary.dart';
 import 'package:anx_reader/enums/page_turn_mode.dart';
 import 'package:anx_reader/enums/reading_info.dart';
 import 'package:anx_reader/enums/lang_list.dart';
@@ -53,6 +54,7 @@ import 'package:anx_reader/widgets/context_menu/context_menu.dart';
 import 'package:anx_reader/widgets/reading_page/more_settings/page_turning/diagram.dart';
 import 'package:anx_reader/widgets/reading_page/more_settings/page_turning/types_and_icons.dart';
 import 'package:anx_reader/widgets/reading_page/style_widget.dart';
+import 'package:anx_reader/widgets/reading_page/vocabulary_word_dialog.dart';
 import 'package:battery_plus/battery_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -277,12 +279,77 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
   }
 
   void _applyTranslationSettings() {
+    unawaited(refreshVocabulary());
     setTranslationLevel(Prefs().translationLevel);
     setAiBatchSize(Prefs().aiBatchSize);
     setAiWorkers(Prefs().aiTranslateWorkers);
     setTranslationMode(Prefs().getBookTranslationMode(widget.book.id));
     setTranslationColors(Prefs().translationColorEnabled,
         jsonEncode(Prefs().translationLevelColors));
+  }
+
+  Future<void> refreshVocabulary() async {
+    final source = _resolveBookSourceLanguage();
+    try {
+      final statuses = source == LangListEnum.auto
+          ? <String, String>{}
+          : await vocabularyDao.statuses(source.code);
+      if (!mounted || source != _resolveBookSourceLanguage()) return;
+      await webViewController.evaluateJavascript(
+          source:
+              'if (typeof reader !== "undefined" && reader.view?.setVocabularyStatuses) reader.view.setVocabularyStatuses(${jsonEncode(statuses)});');
+    } catch (error) {
+      AnxLog.warning('Could not refresh vocabulary: $error');
+    }
+  }
+
+  bool _vocabularyDialogOpen = false;
+
+  Future<void> _openVocabularyWord(List<dynamic> args) async {
+    if (!mounted ||
+        !_isTopOfNavigationStack ||
+        _vocabularyDialogOpen ||
+        args.isEmpty ||
+        args.first is! Map) {
+      return;
+    }
+    final payload = args.first as Map;
+    String? text(String key, int limit) {
+      final value = payload[key];
+      return value is String && value.length <= limit ? value : null;
+    }
+
+    final word = text('word', 120),
+        translation = text('translation', 2000),
+        contextText = text('contextText', 12000),
+        position = text('cfi', 2048);
+    if (word == null ||
+        word.trim().isEmpty ||
+        translation == null ||
+        contextText == null ||
+        position == null) {
+      return;
+    }
+    _vocabularyDialogOpen = true;
+    removeOverlay();
+    try {
+      final source = await showVocabularyWordDialog(context,
+          book: widget.book,
+          word: word,
+          translation: translation,
+          contextText: contextText,
+          chapter: chapterTitle,
+          cfi: position,
+          sourceLanguage: _resolveBookSourceLanguage(),
+          targetLanguage: Prefs().fullTextTranslateTo);
+      if (source != null && mounted) {
+        Prefs().setBookInterlinearSourceLangOverride(widget.book.id, source);
+        await refreshVocabulary();
+      }
+    } finally {
+      _vocabularyDialogOpen = false;
+      if (mounted) restoreReaderFocus();
+    }
   }
 
   Future<void> goToPercentage(double value) async {
@@ -405,8 +472,8 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
   void goToHref(String href) =>
       webViewController.evaluateJavascript(source: "goToHref('$href')");
 
-  void goToCfi(String cfi) =>
-      webViewController.evaluateJavascript(source: "goToCfi('$cfi')");
+  void goToCfi(String cfi) => webViewController.evaluateJavascript(
+      source: 'goToCfi(${jsonEncode(cfi)})');
 
   void addAnnotation(BookNote bookNote) {
     final noteContent =
@@ -1516,6 +1583,8 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
   }
 
   Future<void> setHandler(InAppWebViewController controller) async {
+    controller.addJavaScriptHandler(
+        handlerName: 'onVocabularyWordTap', callback: _openVocabularyWord);
     controller.addJavaScriptHandler(
         handlerName: 'onLoadEnd',
         callback: (args) {

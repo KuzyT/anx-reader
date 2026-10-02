@@ -73,6 +73,7 @@ void main() {
 
       final db = await DBHelper().database;
       expect(await db.getVersion(), currentDbVersion);
+      expect(await db.query('tb_vocabulary_words'), isEmpty);
       expect((await db.query('tb_books')).single['last_read_position'],
           'epubcfi(/6/2!/4/2/1:4)');
       expect((await db.query('tb_notes')).single['content'], 'Saved note');

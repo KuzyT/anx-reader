@@ -425,6 +425,7 @@ Future<void> pushToReadingPage(
   Book book, {
   String? cfi,
   String? heroTag,
+  bool closeCurrentReader = false,
 }) async {
   if (book.isDeleted) {
     AnxToast.show(L10n.of(context).bookDeleted);
@@ -454,16 +455,22 @@ Future<void> pushToReadingPage(
   }
   ref.read(aiChatProvider.notifier).clear();
   final initialThemes = await themeDao.selectThemes();
-  ref.read(currentReadingProvider.notifier).start(
-        CurrentReadingState(
-          book: book,
-          cfi: cfi,
-        ),
-      );
-
+  if (!context.mounted) return;
   final currentReading = ref.read(currentReadingProvider.notifier);
   final chapterContentBridge = ref.read(chapterContentBridgeProvider.notifier);
   final tocSearch = ref.read(tocSearchProvider.notifier);
+  if (closeCurrentReader && readingPageKey.currentContext != null) {
+    final oldRoute = ModalRoute.of(readingPageKey.currentContext!);
+    Navigator.of(context).popUntil((route) => route.isFirst);
+    // Wait for disposal before reusing the reader's GlobalKeys.
+    await oldRoute?.completed;
+  }
+  currentReading.start(
+    CurrentReadingState(
+      book: book,
+      cfi: cfi,
+    ),
+  );
 
   await Navigator.push(
     navigatorKey.currentContext!,

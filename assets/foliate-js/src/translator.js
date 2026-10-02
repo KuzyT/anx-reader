@@ -47,6 +47,8 @@ export class Translator {
   #translationColorEnabled = false
   #translationLevelColors = {}
   #translationLevel = 'full'
+  #vocabularyStatuses = {}
+  #observedDocuments = new WeakSet()
   #aiBatchSize = 30
   #aiWorkers = 1
   observedElements = new Set()
@@ -373,18 +375,66 @@ export class Translator {
     })
   }
 
-  observeDocument(doc) {
+  setVocabularyStatuses(statuses) {
+    this.#vocabularyStatuses = statuses || {}
+    if (this.#translationMode !== TranslationMode.INTERLINEAR) return
+    this.observedElements.forEach(element => {
+      const data = this.#translatedElements.get(element)
+      if (data?.translatedText) this.#applyTranslation(element, data.translatedText)
+    })
+  }
+
+  #wordKey(word) {
+    return word.trim().toLowerCase().replace(/[‘’]/g, "'")
+      .replace(/\s+/g, ' ').replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')
+  }
+
+  #listenForVocabulary(doc) {
+    if (this.#observedDocuments.has(doc)) return
+    this.#observedDocuments.add(doc)
+    let pointer = null
+    doc.addEventListener('pointerdown', event => {
+      pointer = { x: event.clientX, y: event.clientY, time: Date.now() }
+    }, true)
+    const open = event => {
+      if (this.#translationMode !== TranslationMode.INTERLINEAR || event.defaultPrevented) return
+      const word = event.target.closest?.('[data-vocabulary-word]')
+      if (!word || word.closest('a[href]') || !doc.getSelection()?.isCollapsed) return
+      if (event.type === 'click' && event.detail && pointer &&
+          (Date.now() - pointer.time > 500 || Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 10)) return
+      if (event.type === 'keydown' && !['Enter', ' '].includes(event.key)) return
+      const element = word.closest('.translated-text')?.parentElement
+      const data = this.#translatedElements.get(element)
+      if (!data) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      window.flutter_inappwebview?.callHandler('onVocabularyWordTap', {
+        word: word.dataset.vocabularyWord,
+        translation: word.dataset.vocabularyTranslation,
+        contextText: data.originalText,
+        cfi: element.dataset.vocabularyCfi || '',
+      }).catch(error => console.warn('Vocabulary menu failed:', error))
+    }
+    doc.addEventListener('click', open, true)
+    doc.addEventListener('keydown', open, true)
+  }
+
+  observeDocument(doc, cfiForElement) {
     // console.log('Observing document for translation, doc:', doc)
     if (!doc) {
       console.warn('No document provided to observeDocument')
       return
     }
         
+    this.#listenForVocabulary(doc)
     const textElements = this.#walkTextNodes(doc.body || doc.documentElement)
     // console.log(`Found ${textElements.length} text elements to observe`)
     
     textElements.forEach(element => {
       if (!this.observedElements.has(element)) {
+        if (cfiForElement && !element.dataset.vocabularyCfi) {
+          try { element.dataset.vocabularyCfi = cfiForElement(element) } catch (_) {}
+        }
         this.#observer.observe(element)
         this.observedElements.add(element)
         // console.log('Added element to observer:', element.tagName, element.textContent?.substring(0, 50))
@@ -844,8 +894,7 @@ export class Translator {
         const markerPairs = this.#parseMarkerFormat(translatedData)
         if (markerPairs && markerPairs.length > 0) {
           // Apply level filtering for unified word_wise cache
-          const filteredPairs = this.#filterByLevel(markerPairs, this.#translationLevel)
-          this.#applyRubyTranslation(element, filteredPairs)
+          this.#applyRubyTranslation(element, markerPairs)
           return
         }
       }
@@ -969,14 +1018,23 @@ export class Translator {
     wrapper.style.display = 'inline'
     
     for (let i = 0; i < wordPairs.length; i++) {
-      const [original, translation, minLevel] = wordPairs[i]
+      const [original, rawTranslation, minLevel] = wordPairs[i]
+      if (typeof original !== 'string') continue
+      const status = this.#vocabularyStatuses[this.#wordKey(original)]
+      const translation = status === 'known' ? '' : status === 'learning' ? rawTranslation :
+        this.#filterByLevel([[original, rawTranslation, minLevel]], this.#translationLevel)[0][1]
+      const base = document.createElement('span')
+      base.textContent = original
+      if (status === 'learning') base.style.textDecoration = 'underline dotted'
+      let wordElement = base
       
       // Empty translations (like [um|] from parser errors) fall back to just the original word
       if (translation && translation.trim()) {
         // Word with translation — use ruby element (even if translation is empty, it helps layout spacing or highlighting)
         const ruby = document.createElement('ruby')
         ruby.className = 'anx-wordwise'
-        ruby.textContent = original
+        ruby.appendChild(base)
+        wordElement = ruby
         
         const rt = document.createElement('rt')
         rt.textContent = translation
@@ -1003,9 +1061,14 @@ export class Translator {
         wrapper.appendChild(ruby)
       } else {
         // Word without translation — just the word
-        const span = document.createElement('span')
-        span.textContent = original
-        wrapper.appendChild(span)
+        wrapper.appendChild(base)
+      }
+      if (this.#wordKey(original)) {
+        wordElement.dataset.vocabularyWord = original
+        wordElement.dataset.vocabularyTranslation = rawTranslation || ''
+        wordElement.tabIndex = 0
+        wordElement.setAttribute('role', 'button')
+        wordElement.setAttribute('aria-label', `${original}: ${rawTranslation || ''}`)
       }
       
       // Add space between words (except after last)

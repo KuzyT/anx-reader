@@ -48,7 +48,9 @@ void main() {
       final id = await save();
       expect(await save(), id);
       await save(context: 'Outro exemplo', bookId: 2);
-      expect((await vocabularyDao.cards()).length, 2);
+      expect(await save(bookId: 2), isNot(id));
+      expect((await vocabularyDao.cards()).length, 3);
+      expect((await vocabularyDao.cards(bookId: 2)).length, 2);
       expect(await vocabularyDao.statuses('pt-BR'), {'olá': 'learning'});
       expect(await vocabularyDao.statuses('en'), isEmpty);
       final card = (await vocabularyDao.cards(bookId: 1)).single;
@@ -58,7 +60,7 @@ void main() {
           isEmpty);
       await vocabularyDao.setStatus(card.wordId, VocabularyStatus.learning);
       await translationCacheDao.clearAll();
-      expect((await vocabularyDao.cards()).length, 2);
+      expect((await vocabularyDao.cards()).length, 3);
       final csv =
           utf8.decode(vocabularyAnkiCsv(await vocabularyDao.cards(bookId: 1)));
       expect(csv, startsWith('#separator:Comma\n#html:false\n'));
@@ -110,6 +112,8 @@ void main() {
       () {
     expect(vocabularyWordKey(' “D’Água!” '), "d'água");
     expect(vocabularyWordKey('Água'), isNot(vocabularyWordKey('Agua')));
+    expect(vocabularyWordKey(' “cafe\u0301!” '), 'cafe\u0301');
+    expect(vocabularyWordKey('தமிழ்!'), 'தமிழ்');
     expect(() => vocabularyLanguage('auto'), throwsArgumentError);
   });
   testWidgets(

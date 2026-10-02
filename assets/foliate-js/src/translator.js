@@ -386,7 +386,7 @@ export class Translator {
 
   #wordKey(word) {
     return word.trim().toLowerCase().replace(/[‘’]/g, "'")
-      .replace(/\s+/g, ' ').replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')
+      .replace(/\s+/g, ' ').replace(/^[^\p{L}\p{N}\p{M}]+|[^\p{L}\p{N}\p{M}]+$/gu, '')
   }
 
   #listenForVocabulary(doc) {
@@ -407,7 +407,7 @@ export class Translator {
       const data = this.#translatedElements.get(element)
       if (!data) return
       event.preventDefault()
-      event.stopImmediatePropagation()
+      event.stopPropagation()
       window.flutter_inappwebview?.callHandler('onVocabularyWordTap', {
         word: word.dataset.vocabularyWord,
         translation: word.dataset.vocabularyTranslation,
@@ -415,7 +415,8 @@ export class Translator {
         cfi: element.dataset.vocabularyCfi || '',
       }).catch(error => console.warn('Vocabulary menu failed:', error))
     }
-    doc.addEventListener('click', open, true)
+    // Annotation capture handlers get first refusal before vocabulary opens.
+    doc.addEventListener('click', open)
     doc.addEventListener('keydown', open, true)
   }
 

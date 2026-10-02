@@ -44,8 +44,14 @@ class VocabularyDao {
       }
       final cards = await txn.query('tb_vocabulary_cards',
           where:
-              'word_id = ? AND target_lang = ? AND translation = ? AND context_text = ?',
-          whereArgs: [wordId, target, translation.trim(), contextText.trim()]);
+              'word_id = ? AND target_lang = ? AND translation = ? AND context_text = ? AND book_id = ?',
+          whereArgs: [
+            wordId,
+            target,
+            translation.trim(),
+            contextText.trim(),
+            bookId
+          ]);
       if (cards.isNotEmpty) return cards.first['id'] as String;
       final id = const Uuid().v4();
       await txn.insert('tb_vocabulary_cards', {

@@ -457,7 +457,7 @@ class DBHelper {
           context_text TEXT NOT NULL, book_id INTEGER NOT NULL,
           book_title TEXT NOT NULL, chapter TEXT NOT NULL, cfi TEXT NOT NULL,
           created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-          UNIQUE(word_id, target_lang, translation, context_text),
+          UNIQUE(word_id, target_lang, translation, context_text, book_id),
           FOREIGN KEY(word_id) REFERENCES tb_vocabulary_words(id))''');
     }
 

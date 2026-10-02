@@ -280,6 +280,7 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
   }
 
   Future<void> _refreshInterlinearView() async {
+    await epubPlayerKey.currentState?.refreshVocabulary();
     await epubPlayerKey.currentState?.webViewController.evaluateJavascript(
       source: '''
 (() => {

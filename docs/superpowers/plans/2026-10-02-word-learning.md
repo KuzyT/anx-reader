@@ -28,30 +28,31 @@
 Files: lib/dao/database.dart, lib/dao/vocabulary.dart, lib/models/vocabulary.dart,
 lib/service/vocabulary/anki_export.dart, test/vocabulary_test.dart.
 
-- [ ] Add regression test for missing v9 tables; run RED.
-- [ ] Implement two-table migration, normalized keys, transaction save/status changes and queries.
-- [ ] Add tests for persistence, duplicate ID, different context, language isolation, backup copy and cache independence.
-- [ ] Implement plain UTF-8 CSV with Anki directives using existing csv; check escaped multiline fields and repeated IDs.
-- [ ] Run tests and commit.
+- [x] Add regression test for missing v9 tables; run RED.
+- [x] Implement two-table migration, normalized keys, transaction save/status changes and queries.
+- [x] Add tests for persistence, duplicate ID, different context, language isolation, backup copy and cache independence.
+- [x] Implement plain UTF-8 CSV with Anki directives using existing csv; check escaped multiline fields and repeated IDs.
+- [x] Run tests and commit.
 
 ### Task 2: Personal interlinear hints and tap
 
 Files: assets/foliate-js/src/translator.js, view.js, interlinear-smoke.html,
 lib/page/book_player/epub_player.dart, lib/widgets/reading_page/vocabulary_word_dialog.dart.
 
-- [ ] Extend browser check for known/learning priority and tap payload; run RED.
-- [ ] Capture paragraph CFI before ruby changes; delegate short tap/keyboard actions, preserving selection and gestures.
-- [ ] Apply local status map without network; retain raw translations for editing hidden hints.
-- [ ] Connect Flutter popup/save/refresh with resolved book language and mounted checks.
-- [ ] Run browser and Flutter checks; commit.
+- [x] Extend browser check for known/learning priority and tap payload; run RED.
+- [x] Capture paragraph CFI before ruby changes; delegate short tap/keyboard actions, preserving selection and gestures.
+- [x] Apply local status map without network; retain raw translations for editing hidden hints.
+- [x] Connect Flutter popup/save/refresh with resolved book language and mounted checks.
+- [x] Run browser and Flutter checks; commit.
 
 ### Task 3: Dictionary and delivery
 
 Files: lib/page/vocabulary_page.dart, reading_settings.dart, app_en.arb/app_ru.arb,
 docs/word-learning.md; rebuild dist/bundle.js.
 
-- [ ] Add search/status/book filtering, editing, reset, copy, context navigation and export.
-- [ ] Reuse existing reader navigation while avoiding duplicate GlobalKeys.
-- [ ] Generate localizations, build JS, run full tests and analyzer.
-- [ ] Independent focused review and corrections; Windows/Android builds.
+- [x] Add search/status/book filtering, editing, reset, copy, context navigation and export.
+- [x] Reuse existing reader navigation while avoiding duplicate GlobalKeys.
+- [x] Generate localizations, build JS, run full tests and analyzer.
+- [x] Independent focused review and corrections.
+- [ ] Windows/Android builds after corrections.
 - [ ] Commit/push new branch and create stacked draft PR against codex/upstream-refresh.

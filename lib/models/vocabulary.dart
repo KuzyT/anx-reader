@@ -12,7 +12,9 @@ String vocabularyWordKey(String word) => word
     .toLowerCase()
     .replaceAll(RegExp('[‘’]'), "'")
     .replaceAll(RegExp(r'\s+'), ' ')
-    .replaceAll(RegExp(r'^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$', unicode: true), '');
+    .replaceAll(
+        RegExp(r'^[^\p{L}\p{N}\p{M}]+|[^\p{L}\p{N}\p{M}]+$', unicode: true),
+        '');
 
 String vocabularyLanguage(String code) {
   final language = code.trim().toLowerCase().split(RegExp('[-_]')).first;

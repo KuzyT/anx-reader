@@ -301,6 +301,8 @@ export class View extends HTMLElement {
 
   #handleClick(doc) {
     doc.addEventListener('click', e => {
+      if (this.#translator.getTranslationMode() === TranslationMode.INTERLINEAR &&
+          e.target.closest?.('[data-vocabulary-word]')) return
       if (window.isFootNoteOpen() && !e.currentTarget.__isFootNote) {
         window.closeFootNote()
         return

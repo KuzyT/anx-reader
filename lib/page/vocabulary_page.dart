@@ -146,7 +146,9 @@ class _VocabularyPageState extends ConsumerState<VocabularyPage> {
     try {
       if (card.bookId == epubPlayerKey.currentState?.widget.book.id) {
         final player = epubPlayerKey.currentState!;
-        Navigator.pop(context);
+        final readerRoute = ModalRoute.of(player.context);
+        if (readerRoute == null) throw StateError('Reader route unavailable');
+        Navigator.of(context).popUntil((route) => route == readerRoute);
         player.goToCfi(card.cfi);
       } else {
         final book = await bookDao.selectBookById(card.bookId);

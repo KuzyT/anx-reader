@@ -54,5 +54,7 @@ docs/word-learning.md; rebuild dist/bundle.js.
 - [x] Reuse existing reader navigation while avoiding duplicate GlobalKeys.
 - [x] Generate localizations, build JS, run full tests and analyzer.
 - [x] Independent focused review and corrections.
-- [ ] Windows/Android builds after corrections.
-- [ ] Commit/push new branch and create stacked draft PR against codex/upstream-refresh.
+- [x] Windows/Android builds after corrections.
+- [x] Commit/push new branch and create stacked draft PR against codex/upstream-refresh.
+
+Delivery: code commit 138d03c7; draft PR https://github.com/KuzyT/anx-reader/pull/4 stacked on #3. Windows and Android debug builds copied to D:/PROJECTS/anx-reader/build/word-learning-138d03c7 and SHA-256 recorded in checksums.txt. 13 Flutter tests,19 browser checks and Node mode check pass; analyzer exit0,baseline76 warnings/info. Independent review corrections verified. Anki GUI import and physical device checks remain manual.

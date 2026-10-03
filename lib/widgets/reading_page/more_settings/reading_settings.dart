@@ -11,6 +11,7 @@ import 'package:anx_reader/enums/code_highlight_theme.dart';
 import 'package:anx_reader/l10n/generated/L10n.dart';
 import 'package:anx_reader/models/reading_info.dart';
 import 'package:anx_reader/page/reading_page.dart';
+import 'package:anx_reader/page/vocabulary_page.dart';
 import 'package:anx_reader/page/settings_page/subpage/fonts.dart';
 import 'package:anx_reader/widgets/common/anx_segmented_button.dart';
 import 'package:anx_reader/widgets/reading_page/ai_status_overlay.dart';
@@ -279,6 +280,7 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
   }
 
   Future<void> _refreshInterlinearView() async {
+    await epubPlayerKey.currentState?.refreshVocabulary();
     await epubPlayerKey.currentState?.webViewController.evaluateJavascript(
       source: '''
 (() => {
@@ -1620,8 +1622,8 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
                           onChanged: (nextValue) {
                             if (nextValue == null) return;
                             setDialogState(() => bookAiRefineMode = nextValue);
-                            Prefs()
-                                .setBookAiRefineWordLevelsMode(bookId, nextValue);
+                            Prefs().setBookAiRefineWordLevelsMode(
+                                bookId, nextValue);
                             setState(() {});
                           },
                         ),
@@ -1654,6 +1656,15 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
           const Divider(height: 20),
           writingMode(),
           translationMode(),
+          OutlinedButton.icon(
+              onPressed: () async {
+                await Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => VocabularyPage(
+                        bookId: epubPlayerKey.currentState?.widget.book.id)));
+                await epubPlayerKey.currentState?.refreshVocabulary();
+              },
+              icon: const Icon(Icons.school_outlined),
+              label: Text(L10n.of(context).vocabularyTitle)),
           if (epubPlayerKey.currentState != null &&
               Prefs().getBookTranslationMode(
                       epubPlayerKey.currentState!.widget.book.id) ==

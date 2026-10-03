@@ -212,7 +212,12 @@ export class View extends HTMLElement {
     this.#handleImage(doc)
     
     // Start translation observation for this document
-    this.#translator.observeDocument(doc)
+        this.#translator.observeDocument(doc, element => {
+            const range = doc.createRange()
+            range.selectNodeContents(element)
+            range.collapse(true)
+            return this.getCFI(index, range)
+        })
     
     this.#emit('load', { doc, index })
   }
@@ -296,6 +301,8 @@ export class View extends HTMLElement {
 
   #handleClick(doc) {
     doc.addEventListener('click', e => {
+      if (this.#translator.getTranslationMode() === TranslationMode.INTERLINEAR &&
+          e.target.closest?.('[data-vocabulary-word]')) return
       if (window.isFootNoteOpen() && !e.currentTarget.__isFootNote) {
         window.closeFootNote()
         return
@@ -605,6 +612,10 @@ export class View extends HTMLElement {
 
   setTranslationLevel(level) {
     this.#translator.setTranslationLevel(level)
+  }
+
+  setVocabularyStatuses(statuses) {
+    this.#translator.setVocabularyStatuses(statuses)
   }
 
   setTranslationColors(enabled, jsonColors) {

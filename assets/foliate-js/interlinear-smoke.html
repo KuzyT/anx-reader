@@ -11,20 +11,22 @@ const check = (condition, message) => {
 }
 // Keep the observer deterministic; force-translate exercises the real batch path.
 window.IntersectionObserver = class { observe() {} disconnect() {} unobserve() {} }
-async function fixture(handler) {
+async function fixture(handler, html = '<p>Olá, mundo!</p>') {
   const frame = document.createElement('iframe')
   frame.style.cssText = 'width:800px;height:400px;display:block'
   document.body.append(frame)
-  frame.contentDocument.body.innerHTML = '<p>Olá, mundo!</p>'
+  frame.contentDocument.body.innerHTML = html
   const translator = new Translator()
   window.flutter_inappwebview = { callHandler: handler }
-  translator.observeDocument(frame.contentDocument)
+  translator.observeDocument(frame.contentDocument, () => 'epubcfi(/6/2!/4/2:0)')
   translator.setTranslationLevel('a1')
   return { translator, frame, p: frame.contentDocument.querySelector('p') }
 }
 try {
   const originals = []
+  const taps = []
   const { translator, frame, p } = await fixture(async (name, texts) => {
+    if (name === 'onVocabularyWordTap') { taps.push(texts); return null }
     if (name === 'translateBatch') {
       originals.push(JSON.parse(texts))
       return JSON.stringify(['[Olá|Привет|a1], [mundo|мир|b1]!'])
@@ -33,6 +35,49 @@ try {
   })
   await translator.setTranslationMode(TranslationMode.INTERLINEAR)
   check(p.querySelectorAll('ruby rt').length === 2, 'two interlinear hints rendered')
+  translator.setVocabularyStatuses({ 'olá': 'known', 'mundo': 'learning' })
+  translator.setTranslationLevel('c2')
+  check(p.querySelectorAll('rt').length === 1 && p.querySelector('rt').textContent === 'мир', 'personal states override CEFR')
+  const known = p.querySelector('[data-vocabulary-word="Olá"]')
+  known.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  check(taps.length === 1 && taps[0].translation === 'Привет' && taps[0].contextText === 'Olá, mundo!' && taps[0].cfi === 'epubcfi(/6/2!/4/2:0)', 'tap keeps hidden translation, original context and original CFI')
+  known.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 1, clientY: 1 }))
+  known.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1, clientX: 100, clientY: 100 }))
+  check(taps.length === 1, 'drag does not open word menu')
+  const selection = frame.contentDocument.getSelection()
+  const range = frame.contentDocument.createRange()
+  range.selectNodeContents(known)
+  selection.addRange(range)
+  known.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  check(taps.length === 1, 'selection does not open word menu')
+  selection.removeAllRanges()
+  known.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter' }))
+  check(taps.length === 2, 'keyboard opens word menu')
+  translator.observeDocument(frame.contentDocument)
+  known.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  check(taps.length === 3, 'reobserving a document does not duplicate tap handlers')
+  let annotations = 0
+  const annotationClick = event => {
+    event.preventDefault()
+    event.stopPropagation()
+    annotations++
+  }
+  // View installs annotation capture after the translator has observed the doc.
+  frame.contentDocument.addEventListener('click', annotationClick, true)
+  known.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+  check(annotations === 1 && taps.length === 3, 'annotation capture wins over vocabulary')
+  frame.contentDocument.removeEventListener('click', annotationClick, true)
+  const link = frame.contentDocument.createElement('a')
+  link.href = '#example'
+  known.replaceWith(link)
+  link.append(known)
+  let links = 0
+  link.addEventListener('click', event => { event.preventDefault(); links++ })
+  known.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+  check(links === 1 && taps.length === 3, 'links keep their own action')
+  link.replaceWith(known)
+  translator.setVocabularyStatuses({})
+  translator.setTranslationLevel('a1')
   translator.setTranslationColors(true, JSON.stringify({ a1: '#008000', b1: '#0000ff' }))
   check(p.querySelector('rt[data-level="a1"]').style.color === 'rgb(0, 128, 0)', 'CEFR color restored')
   translator.setTranslationLevel('b1')
@@ -59,6 +104,23 @@ try {
   check(!second.p.querySelector('.translated-text'), 'cancelled generation never applies a late result')
   second.translator.destroy()
   second.frame.remove()
+
+  const json = await fixture(async name => name === 'translateBatch' ?
+    JSON.stringify([JSON.stringify([['Olá', 'Привет', 'a1'], ['mundo', 'мир', 'b1']])]) : '{}')
+  await json.translator.setTranslationMode(TranslationMode.INTERLINEAR)
+  json.translator.setTranslationLevel('b1')
+  check(json.p.querySelectorAll('rt').length === 1, 'JSON pairs also obey CEFR')
+  json.translator.setVocabularyStatuses({ 'olá': 'learning', 'mundo': 'known' })
+  check(json.p.querySelectorAll('rt').length === 1 && json.p.querySelector('rt').textContent === 'Привет', 'JSON pairs obey personal states')
+  json.translator.destroy()
+  json.frame.remove()
+  const marks = await fixture(async name => name === 'translateBatch' ?
+    JSON.stringify([JSON.stringify([['cafe\u0301', 'кофе'], ['தமிழ்', 'тамильский']])]) : '{}', '<p>cafe\u0301 தமிழ்</p>')
+  marks.translator.setVocabularyStatuses({ 'cafe\u0301': 'known', 'தமிழ்': 'known' })
+  await marks.translator.setTranslationMode(TranslationMode.INTERLINEAR)
+  check(marks.p.querySelectorAll('rt').length === 0, 'combining marks stay in vocabulary keys')
+  marks.translator.destroy()
+  marks.frame.remove()
   window.testResult = { passed: true, checks }
 } catch (error) {
   window.testResult = { passed: false, checks, error: error.message }

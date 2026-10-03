@@ -982,5 +982,26 @@
     }
   },
   "translationAiRequestLabel": "Request:",
-  "translationAiResponseLabel": "Response:"
+  "translationAiResponseLabel": "Response:",
+  "vocabularyTitle": "My vocabulary",
+  "vocabularyKnown": "I know this",
+  "vocabularyLearning": "Learning",
+  "vocabularyNew": "Show normally",
+  "vocabularySource": "Word language",
+  "vocabularyTarget": "Translation language",
+  "vocabularyTranslation": "Translation (editable)",
+  "vocabularyLanguageRequired": "Choose the word language before saving. It will be used for this book.",
+  "vocabularyTranslationRequired": "Enter a translation to learn this word.",
+  "vocabularySaveError": "Could not save. Your changes are still here; please try again.",
+  "vocabularySearch": "Search words, translations or examples",
+  "vocabularyAll": "All states",
+  "vocabularyThisBook": "This book only",
+  "vocabularyEmpty": "No saved words match these filters.",
+  "vocabularyExport": "Export learning words for Anki",
+  "vocabularyExportEmpty": "No learning words in the current selection.",
+  "vocabularyExportError": "Could not export. Please try again.",
+  "vocabularyLoadError": "Could not load vocabulary. Please try again.",
+  "vocabularyOpenContext": "Open example in book",
+  "vocabularyContextError": "This book or reading position is unavailable.",
+  "vocabularyStatusHelp": "Known: hide hints. Learning: always show hints and underline the word. Show normally: use the reading level."
 }

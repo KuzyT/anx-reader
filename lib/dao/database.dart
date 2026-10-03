@@ -13,7 +13,7 @@ import 'package:path/path.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 // Current app database version
-const int currentDbVersion = 8;
+const int currentDbVersion = 9;
 
 const createBookSQL = '''
 CREATE TABLE tb_books (
@@ -443,6 +443,22 @@ class DBHelper {
       case 7:
         // Add translation cache table
         await db.execute(createTranslationCacheSQL);
+        continue case8;
+      case8:
+      case 8:
+        await db.execute('''CREATE TABLE tb_vocabulary_words (
+          id TEXT PRIMARY KEY, source_lang TEXT NOT NULL,
+          word_key TEXT NOT NULL, word TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('new', 'known', 'learning')),
+          updated_at TEXT NOT NULL, UNIQUE(source_lang, word_key))''');
+        await db.execute('''CREATE TABLE tb_vocabulary_cards (
+          id TEXT PRIMARY KEY, word_id TEXT NOT NULL,
+          target_lang TEXT NOT NULL, translation TEXT NOT NULL,
+          context_text TEXT NOT NULL, book_id INTEGER NOT NULL,
+          book_title TEXT NOT NULL, chapter TEXT NOT NULL, cfi TEXT NOT NULL,
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+          UNIQUE(word_id, target_lang, translation, context_text, book_id),
+          FOREIGN KEY(word_id) REFERENCES tb_vocabulary_words(id))''');
     }
 
     if (oldVersion != 0 && Prefs().webdavStatus) {

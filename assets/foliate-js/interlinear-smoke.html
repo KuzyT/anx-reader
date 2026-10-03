@@ -190,13 +190,35 @@ try {
   const failed = await fixture(async name => {
     if (name !== 'translateBatch') return '{}'
     failedCalls++
-    return JSON.stringify([failedCalls === 1 ? '__ANX_PARTIAL__Olá, mundo!' : '[Olá|Привет|a1], [mundo|мир|b1]!'])
+    return JSON.stringify([failedCalls <= 2 ? '__ANX_PARTIAL__Olá, mundo!' : '[Olá|Привет|a1], [mundo|мир|b1]!'])
   })
   await failed.translator.setTranslationMode(TranslationMode.INTERLINEAR)
   check(failed.p.querySelector('[data-vocabulary-word="mundo"]') && !failed.p.querySelector('rt'), 'all-failed reply keeps original tappable without caching empty success')
   await new Promise(resolve => setTimeout(resolve, 900))
-  check(failedCalls === 2 && failed.p.querySelectorAll('rt').length === 2, 'all-failed partial remains retryable')
+  window.repeatedPartialEvidence = {calls:failedCalls,wrappers:failed.p.querySelectorAll('.translated-text').length,text:failed.p.innerText}
+  check(failedCalls === 2 && failed.p.querySelectorAll('.translated-text').length === 1 && failed.p.innerText === 'Olá, mundo!', 'consecutive all-failed partials keep exactly one source copy')
+  failed.translator.updateWordLevels({'olá':'b2'})
+  failed.translator.setVocabularyStatuses({'mundo':'learning'})
+  failed.translator.setTranslationLevel('c2')
+  check(!failed.p.querySelector('rt') && failed.p.innerText === 'Olá, mundo!', 'local updates never display untranslated source as a hint')
+  failed.translator.setTranslationLevel('a1')
+  await new Promise(resolve => setTimeout(resolve, 1600))
+  check(failedCalls === 3 && failed.p.querySelectorAll('rt').length === 2 && failed.p.querySelectorAll('.translated-text').length === 1, 'all-failed partial remains retryable and successful hints replace it')
   failed.translator.destroy(); failed.frame.remove()
+  let configCalls = 0, configured = false
+  const config = await fixture(async name => {
+    if (name !== 'translateBatch') return '{}'
+    configCalls++
+    return JSON.stringify([configured ? '[Olá|Привет|a1], [mundo|мир|b1]!' : '__ANX_CONFIG_REQUIRED__'])
+  })
+  await config.translator.setTranslationMode(TranslationMode.INTERLINEAR)
+  await new Promise(resolve => setTimeout(resolve, 900))
+  check(configCalls === 1 && config.p.innerText === 'Olá, mundo!' && !config.p.querySelector('.translated-text'), 'missing provider configuration keeps source intact without automatic retries')
+  configured = true
+  config.translator.onRelocated('page')
+  await new Promise(resolve => setTimeout(resolve, 350))
+  check(configCalls === 2 && config.p.querySelectorAll('rt').length === 2, 'translation resumes after configuration and page relocation')
+  config.translator.destroy(); config.frame.remove()
   const priorityCalls = []
   const priority = await fixture(async (name, texts) => {
     if (name !== 'translateBatch') return '{}'

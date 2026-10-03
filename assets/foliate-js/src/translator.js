@@ -994,6 +994,11 @@ export class Translator {
               continue
             }
 
+            if (translatedText === '__ANX_CONFIG_REQUIRED__') {
+              this.#blockedUntilRelocation.add(element)
+              continue
+            }
+
             if (translatedText === '__ANX_ERROR__' || translatedText === '__ANX_RETRY__') {
               this.#scheduleRetry(element, originalText)
               continue
@@ -1027,8 +1032,7 @@ export class Translator {
               complete: !partial
             })
 
-            if (partial && !this.#hasWordLevelMarkers(translatedText)) this.#applyRubyTranslation(element, [])
-            else this.#applyTranslation(element, translatedText)
+            this.#applyTranslation(element, translatedText)
             if (partial) this.#scheduleRetry(element, originalText)
           }
         } catch (error) {
@@ -1042,10 +1046,9 @@ export class Translator {
 
   #applyTranslation(element, translatedData) {
     // Remove existing translation if any
-    const existingTranslation = element.querySelector('.translated-text')
-    if (existingTranslation) {
-      existingTranslation.remove()
-    }
+    Array.from(element.children).filter(node => node.classList.contains('translated-text'))
+      .forEach(node => node.remove())
+    this.#restoreOriginalText(element)
     
     // Interlinear mode: try ruby/marker rendering
     if (this.#translationMode === TranslationMode.INTERLINEAR) {
@@ -1073,7 +1076,14 @@ export class Translator {
         }
       }
       
-      // Fallback for interlinear: full-sentence ruby block above original
+      // A failed word-level response has no hints; keep one tappable source copy.
+      // The same path is used on retries and local CEFR/vocabulary redraws.
+      if (this.#isWordLevelExpected()) {
+        this.#applyRubyTranslation(element, [])
+        return
+      }
+
+      // Fallback for full-text interlinear: sentence translation above original.
       this.#applyRubyBlockTranslation(element, translatedData)
       return
     }

@@ -810,6 +810,8 @@
   "translateGoogleCloud": "Google Cloud API",
   "translateDeepL": "DeepL API",
   "translateTip": "Подсказка",
+  "translationProviderNeedsKey": "Для {provider} нужен API-ключ. Откройте Настройки → Перевод: настройте его или выберите AI.",
+  "@translationProviderNeedsKey": {"placeholders": {"provider": {"type": "String"}}},
   "translateAzureHelpText": "Microsoft Azure Translate имеет бесплатную квоту 2 млн символов в месяц.",
   "translateGoogleHelpText": "Google Cloud Translation API имеет бесплатную квоту 500 тыс. символов в месяц.",
   "translateDeepLHelpText": "Бесплатный план DeepL API имеет бесплатную квоту 500 тыс. символов в месяц.",

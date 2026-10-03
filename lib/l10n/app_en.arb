@@ -856,6 +856,8 @@
   "translateGoogleCloud": "Google Cloud API",
   "translateDeepL": "DeepL API",
   "translateTip": "Tip",
+  "translationProviderNeedsKey": "{provider} needs an API key. Open Settings → Translation to configure it or select AI.",
+  "@translationProviderNeedsKey": {"placeholders": {"provider": {"type": "String"}}},
   "translateAzureHelpText": "Microsoft Azure Translate has a free quota of 2M chars/month.",
   "translateGoogleHelpText": "Google Cloud Translation API has a free quota of 500k chars/month.",
   "translateDeepLHelpText": "DeepL API Free plan has a free quota of 500k chars/month.",

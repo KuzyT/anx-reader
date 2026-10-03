@@ -157,6 +157,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
   String? _lastSelectionContextText;
   bool _selectionClearLocked = false;
   bool _selectionClearPending = false;
+  String? _reportedTranslationConfiguration;
 
   // Scroll wheel debounce
   Timer? _scrollDebounceTimer;
@@ -2003,12 +2004,34 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
           // Warm cache bypasses busy provider workers entirely.
           var cached = await _readCachedTranslations(bookId, key, texts,
               wordWise: wordWise);
-          if (!current()) {
+          if (!mounted || !current()) {
             return jsonEncode(List.filled(texts.length, '__ANX_CANCELLED__'));
           }
           if (texts.every(cached.containsKey)) {
             return jsonEncode(ordered(cached));
           }
+          if ([
+                TranslateService.microsoftApi,
+                TranslateService.googleApi,
+                TranslateService.deepl
+              ].contains(service) &&
+              (service.provider.getConfig()['api_key']?.toString() ?? '')
+                  .trim()
+                  .isEmpty) {
+            final message = L10n.of(context)
+                .translationProviderNeedsKey(service.getLabel(context));
+            if (_reportedTranslationConfiguration != service.name) {
+              _reportedTranslationConfiguration = service.name;
+              AnxToast.show(message, duration: 8000);
+              AiTranslationStatusService().setError(message);
+              AiTranslationStatusService()
+                  .addLog(message: message, isError: true);
+            }
+            return jsonEncode(texts
+                .map((text) => cached[text] ?? '__ANX_CONFIG_REQUIRED__')
+                .toList());
+          }
+          _reportedTranslationConfiguration = null;
           while (_activeTranslationWorkers >=
               _maxTranslationWorkers.clamp(1, 10)) {
             final waiter = Completer<void>();

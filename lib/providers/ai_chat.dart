@@ -2,6 +2,7 @@ import 'package:anx_reader/config/shared_preference_provider.dart';
 import 'package:anx_reader/providers/ai_history.dart';
 import 'package:anx_reader/service/ai/ai_history.dart';
 import 'package:anx_reader/service/ai/index.dart';
+import 'package:anx_reader/utils/ai_reasoning_parser.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:langchain_core/chat_models.dart';
@@ -100,7 +101,7 @@ class AiChat extends _$AiChat {
         final updatedMessagesWithResponse =
             List<ChatMessage>.from(updatedMessages);
         updatedMessagesWithResponse[updatedMessagesWithResponse.length - 1] =
-            ChatMessage.ai(assistantResponse);
+            assistantMessageFromDisplayContent(assistantResponse);
 
         yield updatedMessagesWithResponse;
 

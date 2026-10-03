@@ -112,11 +112,7 @@ class SaveImg {
       final sdkInt = deviceInfo.version.sdkInt;
       AnxLog.info('sdkInt: $sdkInt');
 
-      if (sdkInt > 33) {
-        if (!await requestPhotoPer()) {
-          return false;
-        }
-      } else {
+      if (sdkInt < 29) {
         if (!await requestStoragePer()) {
           return false;
         }

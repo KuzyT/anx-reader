@@ -134,6 +134,18 @@ class _AppearanceSettingState extends State<AppearanceSetting> {
                   });
                 },
               ),
+              SettingsTile.switchTile(
+                title: Text(L10n.of(context).readingPageShowActionLabels),
+                leading: const Icon(Icons.subtitles_outlined),
+                initialValue: Prefs().showActionLabels,
+                onToggle: (bool value) {
+                  setState(() {
+                    Prefs().showActionLabels = value;
+                  });
+                },
+                description:
+                    Text(L10n.of(context).readingPageShowActionLabelsTips),
+              ),
             ]),
         SettingsSection(
             title: Text(L10n.of(context).settingsBookshelfCover),

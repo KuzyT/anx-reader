@@ -7,11 +7,11 @@ import 'package:anx_reader/service/config/config_item.dart';
 import 'package:anx_reader/service/translate/ai.dart';
 import 'package:anx_reader/service/translate/deepl.dart';
 import 'package:anx_reader/service/translate/google_api.dart';
-import 'package:anx_reader/service/translate/microsoft.dart';
 import 'package:anx_reader/service/translate/microsoft_api.dart';
 import 'package:anx_reader/service/translate/web_view.dart';
 import 'package:anx_reader/utils/env_var.dart';
 import 'package:anx_reader/utils/log/common.dart';
+import 'package:anx_reader/utils/ai_reasoning_parser.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -22,8 +22,7 @@ enum TranslateService {
   microsoftApi,
   googleApi,
   deepl,
-  ai,
-  microsoft;
+  ai;
 
   TranslateServiceProvider get provider {
     switch (this) {
@@ -39,8 +38,6 @@ enum TranslateService {
         return DeepLTranslateProvider();
       case TranslateService.ai:
         return AiTranslateProvider();
-      case TranslateService.microsoft:
-        return MicrosoftTranslateProvider();
     }
   }
 
@@ -56,6 +53,10 @@ enum TranslateService {
 }
 
 TranslateService getTranslateService(String name) {
+  if (name == 'microsoft') {
+    return TranslateService.microsoftApi;
+  }
+
   try {
     return TranslateService.values.firstWhere((e) => e.name == name);
   } catch (e) {
@@ -96,6 +97,7 @@ abstract class TranslateServiceProvider {
     LangListEnum from,
     LangListEnum to, {
     String? contextText,
+    bool isFullText = false,
     WidgetRef? ref,
   });
 
@@ -105,6 +107,7 @@ abstract class TranslateServiceProvider {
     LangListEnum from,
     LangListEnum to, {
     String? contextText,
+    bool isFullText = false,
     WidgetRef? ref,
   }) async {
     const int maxRetries = 2;
@@ -117,12 +120,16 @@ abstract class TranslateServiceProvider {
           from,
           to,
           contextText: contextText,
+          isFullText: isFullText,
           ref: ref,
         )) {
-          lastResult = result;
-          if (result != '...' && result.trim().isNotEmpty) {
-            return result;
-          }
+          lastResult = splitReasoningEnvelope(result).answerContent;
+        }
+
+        if (lastResult != null &&
+            lastResult.trim().isNotEmpty &&
+            lastResult != '...') {
+          return lastResult;
         }
 
         throw Exception(
@@ -153,8 +160,8 @@ abstract class TranslateServiceProvider {
     String? pageInfo,
     WidgetRef? ref,
   }) async {
-    final futures =
-        texts.map((text) => translateTextOnly(text, from, to, ref: ref));
+    final futures = texts.map((text) =>
+        translateTextOnly(text, from, to, isFullText: true, ref: ref));
     return await Future.wait(futures);
   }
 

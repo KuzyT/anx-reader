@@ -1,3 +1,4 @@
+import 'package:anx_reader/enums/ai_reasoning_effort.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 
 part 'ai_provider.freezed.dart';
@@ -35,13 +36,74 @@ abstract class AiProvider with _$AiProvider {
     bool isBuiltin, // Whether this is a built-in provider (cannot be deleted)
     @Default([]) List<AiApiKey> apiKeys, // List of API keys
     @Default('') String model, // Current selected model
+    @Default(AiReasoningEffort.auto)
+    AiReasoningEffort reasoningEffort, // OpenAI reasoning effort
     @Default(0) int keyIndex, // Current round-robin key index
     DateTime? createdAt, // Creation time
     DateTime? updatedAt, // Last update time
   }) = _AiProvider;
 
-  factory AiProvider.fromJson(Map<String, dynamic> json) =>
-      _$AiProviderFromJson(json);
+  factory AiProvider.fromJson(Map<String, dynamic> json) {
+    String requireString(String key) {
+      final value = json[key];
+      if (value == null) {
+        throw FormatException('AiProvider.$key is required but was null');
+      }
+      return value.toString();
+    }
+
+    String optionalString(String key, [String fallback = '']) {
+      final value = json[key];
+      if (value == null) return fallback;
+      return value.toString();
+    }
+
+    return AiProvider(
+      id: requireString('id'),
+      title: requireString('title'),
+      logoAsset: json['logoAsset']?.toString(),
+      url: requireString('url'),
+      protocol: AiProtocol.fromCode(
+        optionalString('protocol', AiProtocol.openai.code),
+      ),
+      enabled: json['enabled'] as bool? ?? true,
+      isBuiltin: json['isBuiltin'] as bool? ?? false,
+      apiKeys: (json['apiKeys'] as List<dynamic>?)
+              ?.map((e) {
+                if (e is! Map<String, dynamic>) {
+                  throw FormatException('AiApiKey entry must be an object');
+                }
+                final key = e['key'];
+                if (key == null) {
+                  throw FormatException('AiApiKey.key is required but was null');
+                }
+                return AiApiKey(
+                  id: (e['id'] ?? '').toString().isEmpty
+                      ? DateTime.now().microsecondsSinceEpoch.toString()
+                      : e['id'].toString(),
+                  key: key.toString(),
+                  enabled: e['enabled'] as bool? ?? true,
+                  label: e['label']?.toString(),
+                  createdAt: e['createdAt'] == null
+                      ? null
+                      : DateTime.tryParse(e['createdAt'].toString()),
+                );
+              })
+              .toList() ??
+          const [],
+      model: optionalString('model'),
+      reasoningEffort: AiReasoningEffort.fromCode(
+        json['reasoningEffort']?.toString(),
+      ),
+      keyIndex: (json['keyIndex'] as num?)?.toInt() ?? 0,
+      createdAt: json['createdAt'] == null
+          ? null
+          : DateTime.tryParse(json['createdAt'].toString()),
+      updatedAt: json['updatedAt'] == null
+          ? null
+          : DateTime.tryParse(json['updatedAt'].toString()),
+    );
+  }
 
   /// Get the current active API key (based on enabled keys and keyIndex)
   String? get currentApiKey {

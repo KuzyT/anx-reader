@@ -756,6 +756,7 @@ export class Translator {
         
         try {
           const chunkTranslations = await translateBatch(chunkTexts, this.#translationLevel, pageInfo)
+          if (this.#generationId !== currentGen) return
           
           for (let i = 0; i < chunkElements.length; i++) {
             const element = chunkElements[i]

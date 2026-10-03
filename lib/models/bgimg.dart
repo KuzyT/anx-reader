@@ -15,6 +15,8 @@ abstract class BgimgModel with _$BgimgModel {
     String? nightPath,
     required BgimgAlignment alignment,
     BgimgThemeMode? selectedMode,
+    @Default(0.0) double blur,
+    @Default(1.0) double opacity,
   }) = _BgimgModel;
 
   factory BgimgModel.fromJson(Map<String, dynamic> json) =>

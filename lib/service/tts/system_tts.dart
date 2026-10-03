@@ -180,7 +180,18 @@ class SystemTts extends BaseTts {
     if (content != null) {
       _currentVoiceText = content;
     }
-    _currentVoiceText ??= await getHereFunction();
+    if (_currentVoiceText == null) {
+      // getHereFunction() is initTts() — it initialises the JS TTS position
+      // but returns void.  Fetch the actual first sentence via getNextTextFunction.
+      await getHereFunction();
+      _currentVoiceText = await getNextTextFunction();
+    }
+
+    // Guard: if still null or empty (e.g. WebView not ready), abort.
+    if (_currentVoiceText == null || _currentVoiceText!.isEmpty) {
+      return;
+    }
+
     await flutterTts.setVolume(volume);
     await flutterTts.setSpeechRate(rate);
     await flutterTts.setPitch(pitch);

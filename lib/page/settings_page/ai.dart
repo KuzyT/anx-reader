@@ -15,6 +15,7 @@ import 'package:anx_reader/widgets/settings/settings_section.dart';
 import 'package:anx_reader/widgets/settings/settings_tile.dart';
 import 'package:anx_reader/widgets/settings/settings_title.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:anx_reader/utils/toast/common.dart';
@@ -73,6 +74,11 @@ class _AISettingsState extends ConsumerState<AISettings> {
         "identifier": AiPrompts.translate,
         "title": l10n.settingsAiPromptTranslateAndDictionary,
         "variables": ["text", "to_locale", "from_locale", "contextText"],
+      },
+      {
+        "identifier": AiPrompts.fullTextTranslate,
+        "title": l10n.settingsAiPromptFullTextTranslate,
+        "variables": ["text", "to_locale", "from_locale"],
       },
       {
         "identifier": AiPrompts.mindmap,
@@ -221,6 +227,8 @@ class _AISettingsState extends ConsumerState<AISettings> {
               );
             },
           ),
+          CustomSettingsTile(
+              child: _AiRpmTile(setState: () => setState(() {}))),
           // SettingsTile.navigation(
           //   leading: const Icon(Icons.chat),
           //   title: Text(L10n.of(context).aiChat),
@@ -751,6 +759,63 @@ class _AISettingsState extends ConsumerState<AISettings> {
             child: Text(L10n.of(context).commonConfirm),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _AiRpmTile extends StatefulWidget {
+  const _AiRpmTile({required this.setState});
+
+  final VoidCallback setState;
+
+  @override
+  State<_AiRpmTile> createState() => _AiRpmTileState();
+}
+
+class _AiRpmTileState extends State<_AiRpmTile> {
+  late TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    final rpm = Prefs().aiRpm;
+    _controller = TextEditingController(text: rpm == 0 ? '' : rpm.toString());
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = L10n.of(context);
+    return ListTile(
+      title: Text(l10n.settingsAiRpm),
+      subtitle: Text(
+        l10n.settingsAiRpmTip,
+        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+      ),
+      trailing: SizedBox(
+        width: 80,
+        child: TextField(
+          controller: _controller,
+          keyboardType: TextInputType.number,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          textAlign: TextAlign.center,
+          decoration: const InputDecoration(
+            hintText: '0',
+            border: OutlineInputBorder(),
+            contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            isDense: true,
+          ),
+          onChanged: (value) {
+            Prefs().aiRpm = int.tryParse(value) ?? 0;
+            widget.setState();
+          },
+        ),
       ),
     );
   }

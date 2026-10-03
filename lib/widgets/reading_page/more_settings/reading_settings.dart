@@ -9,12 +9,13 @@ import 'package:anx_reader/enums/translation_level.dart';
 import 'package:anx_reader/enums/writing_mode.dart';
 import 'package:anx_reader/enums/code_highlight_theme.dart';
 import 'package:anx_reader/l10n/generated/L10n.dart';
+import 'package:anx_reader/models/reading_info.dart';
 import 'package:anx_reader/page/reading_page.dart';
 import 'package:anx_reader/page/settings_page/subpage/fonts.dart';
 import 'package:anx_reader/widgets/common/anx_segmented_button.dart';
 import 'package:anx_reader/widgets/reading_page/ai_status_overlay.dart';
 import 'package:flutter/material.dart';
-import 'package:icons_plus/icons_plus.dart';
+import 'package:iconsx_plus/iconsx_plus.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 
 class ReadingMoreSettings extends StatefulWidget {
@@ -824,172 +825,159 @@ class _ReadingMoreSettingsState extends State<ReadingMoreSettings> {
     Widget readingInfo() {
       return StatefulBuilder(
         builder: (context, setState) {
+          void updateReadingInfo(ReadingInfoModel info) {
+            Prefs().readingInfo = info;
+            epubPlayerKey.currentState?.changeReadingInfo();
+          }
+
+          Widget buildSettingSlider({
+            required String label,
+            required double value,
+            required double min,
+            required double max,
+            required int divisions,
+            required ValueChanged<double> onChanged,
+          }) {
+            return Row(
+              children: [
+                SizedBox(
+                  width: 96,
+                  child: Text(label),
+                ),
+                Expanded(
+                  child: Slider(
+                    value: value,
+                    min: min,
+                    max: max,
+                    divisions: divisions,
+                    label: value.toStringAsFixed(0),
+                    onChanged: (newValue) {
+                      setState(() {
+                        onChanged(newValue);
+                        epubPlayerKey.currentState?.changeReadingInfo();
+                      });
+                    },
+                  ),
+                ),
+              ],
+            );
+          }
+
+          Widget buildSectionSettings({
+            required String title,
+            required ReadingInfoSectionModel section,
+            required ValueChanged<ReadingInfoSectionModel> onChanged,
+          }) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: buildInfoDropdown(
+                        context,
+                        L10n.of(context).readingPageLeft,
+                        section.left,
+                        (value) {
+                          setState(() {
+                            onChanged(section.copyWith(left: value));
+                          });
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: buildInfoDropdown(
+                        context,
+                        L10n.of(context).readingPageCenter,
+                        section.center,
+                        (value) {
+                          setState(() {
+                            onChanged(section.copyWith(center: value));
+                          });
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: buildInfoDropdown(
+                        context,
+                        L10n.of(context).readingPageRight,
+                        section.right,
+                        (value) {
+                          setState(() {
+                            onChanged(section.copyWith(right: value));
+                          });
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                buildSettingSlider(
+                  label: L10n.of(context).readingSettingsMargin,
+                  value: section.verticalMargin,
+                  min: 0,
+                  max: 80,
+                  divisions: 40,
+                  onChanged: (value) =>
+                      onChanged(section.copyWith(verticalMargin: value)),
+                ),
+                buildSettingSlider(
+                  label: L10n.of(context).readingPageLeftMargin,
+                  value: section.leftMargin,
+                  min: 0,
+                  max: 80,
+                  divisions: 40,
+                  onChanged: (value) =>
+                      onChanged(section.copyWith(leftMargin: value)),
+                ),
+                buildSettingSlider(
+                  label: L10n.of(context).readingPageRightMargin,
+                  value: section.rightMargin,
+                  min: 0,
+                  max: 80,
+                  divisions: 40,
+                  onChanged: (value) =>
+                      onChanged(section.copyWith(rightMargin: value)),
+                ),
+                buildSettingSlider(
+                  label: L10n.of(context).readingPageFontSize,
+                  value: section.fontSize,
+                  min: 8,
+                  max: 24,
+                  divisions: 16,
+                  onChanged: (value) =>
+                      onChanged(section.copyWith(fontSize: value)),
+                ),
+              ],
+            );
+          }
+
+          final readingInfo = Prefs().readingInfo;
+
           return Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                L10n.of(context).readingPageHeaderSettings,
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: buildInfoDropdown(
-                      context,
-                      L10n.of(context).readingPageLeft,
-                      Prefs().readingInfo.headerLeft,
-                      (value) {
-                        setState(() {
-                          final newRules = Prefs().readingInfo.copyWith(
-                                headerLeft: value,
-                              );
-                          Prefs().readingInfo = newRules;
-                          epubPlayerKey.currentState?.changeReadingInfo();
-                        });
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: buildInfoDropdown(
-                      context,
-                      L10n.of(context).readingPageCenter,
-                      Prefs().readingInfo.headerCenter,
-                      (value) {
-                        setState(() {
-                          final newRules = Prefs().readingInfo.copyWith(
-                                headerCenter: value,
-                              );
-                          Prefs().readingInfo = newRules;
-                          // epubPlayerKey.currentState
-                          //     ?.changeReadingInfo(newRules);
-                        });
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: buildInfoDropdown(
-                      context,
-                      L10n.of(context).readingPageRight,
-                      Prefs().readingInfo.headerRight,
-                      (value) {
-                        setState(() {
-                          final newRules = Prefs().readingInfo.copyWith(
-                                headerRight: value,
-                              );
-                          Prefs().readingInfo = newRules;
-                          epubPlayerKey.currentState?.changeReadingInfo();
-                        });
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              Row(
-                children: [
-                  Text(L10n.of(context).readingSettingsMargin),
-                  Expanded(
-                    child: Slider(
-                      value: Prefs().pageHeaderMargin.toDouble(),
-                      min: 0,
-                      max: 80,
-                      divisions: 40,
-                      label: Prefs().pageHeaderMargin.toStringAsFixed(0),
-                      onChanged: (value) {
-                        setState(() {
-                          Prefs().pageHeaderMargin = value;
-                          epubPlayerKey.currentState?.changeReadingInfo();
-                        });
-                      },
-                    ),
-                  ),
-                ],
+              buildSectionSettings(
+                title: L10n.of(context).readingPageHeaderSettings,
+                section: readingInfo.header,
+                onChanged: (section) {
+                  updateReadingInfo(readingInfo.copyWith(header: section));
+                },
               ),
               const Divider(),
-              Text(L10n.of(context).readingPageFooterSettings,
-                  style: Theme.of(context).textTheme.titleMedium),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: buildInfoDropdown(
-                      context,
-                      L10n.of(context).readingPageLeft,
-                      Prefs().readingInfo.footerLeft,
-                      (value) {
-                        setState(() {
-                          final newRules = Prefs().readingInfo.copyWith(
-                                footerLeft: value,
-                              );
-                          Prefs().readingInfo = newRules;
-                          epubPlayerKey.currentState?.changeReadingInfo();
-                        });
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: buildInfoDropdown(
-                      context,
-                      L10n.of(context).readingPageCenter,
-                      Prefs().readingInfo.footerCenter,
-                      (value) {
-                        setState(() {
-                          final newRules = Prefs().readingInfo.copyWith(
-                                footerCenter: value,
-                              );
-                          Prefs().readingInfo = newRules;
-                          epubPlayerKey.currentState?.changeReadingInfo();
-                        });
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: buildInfoDropdown(
-                      context,
-                      L10n.of(context).readingPageRight,
-                      Prefs().readingInfo.footerRight,
-                      (value) {
-                        setState(() {
-                          final newRules = Prefs().readingInfo.copyWith(
-                                footerRight: value,
-                              );
-                          Prefs().readingInfo = newRules;
-                          epubPlayerKey.currentState?.changeReadingInfo();
-                        });
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              Row(
-                children: [
-                  Text(L10n.of(context).readingSettingsMargin),
-                  Expanded(
-                    child: Slider(
-                      value: Prefs().pageFooterMargin.toDouble(),
-                      min: 0,
-                      max: 80,
-                      divisions: 40,
-                      label: Prefs().pageFooterMargin.toStringAsFixed(0),
-                      onChanged: (value) {
-                        setState(() {
-                          // final newRules = Prefs().readingInfo.copyWith(
-                          //       headerFontSize: value.toInt(),
-                          //     );
-                          // Prefs().readingInfo = newRules;
-                          // epubPlayerKey.currentState?.changeReadingInfo();
-                          Prefs().pageFooterMargin = value;
-                          epubPlayerKey.currentState?.changeReadingInfo();
-                        });
-                      },
-                    ),
-                  ),
-                ],
+              buildSectionSettings(
+                title: L10n.of(context).readingPageFooterSettings,
+                section: readingInfo.footer,
+                onChanged: (section) {
+                  updateReadingInfo(readingInfo.copyWith(footer: section));
+                },
               ),
             ],
           );

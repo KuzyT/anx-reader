@@ -20,6 +20,7 @@ abstract class WebViewTranslateProvider extends TranslateServiceProvider {
     LangListEnum from,
     LangListEnum to, {
     String? contextText,
+    bool isFullText = false,
     WidgetRef? ref,
   }) {
     final url = getUrl(text, from, to);
@@ -33,7 +34,6 @@ abstract class WebViewTranslateProvider extends TranslateServiceProvider {
               isInspectable: kDebugMode,
               mediaPlaybackRequiresUserGesture: false,
               allowsInlineMediaPlayback: true,
-              iframeAllow: "camera; microphone",
               iframeAllowFullscreen: true,
             ),
             gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
@@ -72,6 +72,7 @@ abstract class WebViewTranslateProvider extends TranslateServiceProvider {
     LangListEnum from,
     LangListEnum to, {
     String? contextText,
+    bool isFullText = false,
     WidgetRef? ref,
   }) async* {
     // WebView providers do not support stream translation
@@ -84,6 +85,7 @@ abstract class WebViewTranslateProvider extends TranslateServiceProvider {
     LangListEnum from,
     LangListEnum to, {
     String? contextText,
+    bool isFullText = false,
     WidgetRef? ref,
   }) async {
     // WebView providers do not support text-only translation

@@ -1,7 +1,8 @@
-import 'dart:convert';
+import 'package:anx_reader/enums/ai_reasoning_effort.dart';
 import 'package:anx_reader/l10n/generated/L10n.dart';
 import 'package:anx_reader/models/ai_provider.dart';
 import 'package:anx_reader/providers/ai_providers.dart';
+import 'package:anx_reader/service/ai/ai_model_service.dart';
 import 'package:anx_reader/service/ai/index.dart';
 import 'package:anx_reader/service/ai/prompt_generate.dart';
 import 'package:anx_reader/widgets/ai/ai_stream.dart';
@@ -11,7 +12,6 @@ import 'package:anx_reader/widgets/common/container/filled_container.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
-import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 
 class AiProviderDetailPage extends ConsumerStatefulWidget {
@@ -33,9 +33,11 @@ class _AiProviderDetailPageState extends ConsumerState<AiProviderDetailPage> {
   late TextEditingController _modelController;
 
   AiProtocol _selectedProtocol = AiProtocol.openai;
+  AiReasoningEffort _reasoningEffort = AiReasoningEffort.auto;
   List<AiApiKey> _apiKeys = [];
   bool _isModified = false;
   bool _isFetchingModels = false;
+  final GlobalKey _fetchButtonKey = GlobalKey();
 
   @override
   void initState() {
@@ -51,6 +53,7 @@ class _AiProviderDetailPageState extends ConsumerState<AiProviderDetailPage> {
     _urlController = TextEditingController(text: provider?.url ?? '');
     _modelController = TextEditingController(text: provider?.model ?? '');
     _selectedProtocol = provider?.protocol ?? AiProtocol.openai;
+    _reasoningEffort = provider?.reasoningEffort ?? AiReasoningEffort.auto;
     _apiKeys = provider?.apiKeys.toList() ?? [];
 
     _nameController.addListener(() => setState(() => _isModified = true));
@@ -160,7 +163,8 @@ class _AiProviderDetailPageState extends ConsumerState<AiProviderDetailPage> {
                 if (_selectedProtocol == AiProtocol.openai) ...[
                   const SizedBox(width: 8),
                   AnxButton(
-                    onPressed: _fetchModels,
+                    key: _fetchButtonKey,
+                    onPressed: _isFetchingModels ? null : _fetchModels,
                     isLoading: _isFetchingModels,
                     child: Text(l10n.settingsAiProviderFetchModels),
                   ),
@@ -168,6 +172,9 @@ class _AiProviderDetailPageState extends ConsumerState<AiProviderDetailPage> {
               ],
             ),
             const SizedBox(height: 24),
+
+            _buildAdvancedSettingsCard(context),
+            const SizedBox(height: 16),
 
             // API Keys Section
             Row(
@@ -239,6 +246,109 @@ class _AiProviderDetailPageState extends ConsumerState<AiProviderDetailPage> {
               ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildAdvancedSettingsCard(BuildContext context) {
+    final l10n = L10n.of(context);
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final accent = colorScheme.secondary;
+    return FilledContainer(
+      child: ExpansionTile(
+        tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        childrenPadding: const EdgeInsets.all(16),
+        shape: const Border(),
+        collapsedShape: const Border(),
+        iconColor: accent,
+        collapsedIconColor: accent.withValues(alpha: 0.82),
+        title: Row(
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: accent.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                Icons.tune_rounded,
+                size: 18,
+                color: accent,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    l10n.settingsAdvanced,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        children: [
+          DropdownButtonFormField<AiReasoningEffort>(
+            initialValue: _reasoningEffort,
+            decoration: InputDecoration(
+              labelText: l10n.settingsAiProviderReasoningEffort,
+              border: const OutlineInputBorder(),
+            ),
+            items: [
+              DropdownMenuItem(
+                value: AiReasoningEffort.auto,
+                child: Text(l10n.settingsAiProviderReasoningEffortAuto),
+              ),
+              DropdownMenuItem(
+                value: AiReasoningEffort.low,
+                child: Text(l10n.settingsAiProviderReasoningEffortLow),
+              ),
+              DropdownMenuItem(
+                value: AiReasoningEffort.medium,
+                child: Text(l10n.settingsAiProviderReasoningEffortMedium),
+              ),
+              DropdownMenuItem(
+                value: AiReasoningEffort.high,
+                child: Text(l10n.settingsAiProviderReasoningEffortHigh),
+              ),
+            ],
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() {
+                _reasoningEffort = value;
+                _isModified = true;
+              });
+            },
+          ),
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.info_outline_rounded,
+                size: 16,
+                color: colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  l10n.settingsAiProviderReasoningEffortHelp,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                    height: 1.35,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -417,8 +527,8 @@ class _AiProviderDetailPageState extends ConsumerState<AiProviderDetailPage> {
 
   Future<void> _fetchModels() async {
     final l10n = L10n.of(context);
-
-    if (_apiKeys.isEmpty || _urlController.text.isEmpty) {
+    final enabledKeys = _apiKeys.where((k) => k.enabled && k.key.isNotEmpty);
+    if (enabledKeys.isEmpty || _urlController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(l10n.settingsAiProviderNoValidKeys)),
       );
@@ -428,73 +538,63 @@ class _AiProviderDetailPageState extends ConsumerState<AiProviderDetailPage> {
     setState(() => _isFetchingModels = true);
 
     try {
-      final baseUrl = _urlController.text.trim();
-      final url =
-          baseUrl.endsWith('/') ? '${baseUrl}models' : '$baseUrl/models';
-      final apiKey = _apiKeys.firstWhere((k) => k.enabled).key;
+      final models = await fetchAiModels(
+        url: _urlController.text.trim(),
+        apiKey: enabledKeys.first.key,
+      );
 
-      final response = await http.get(
-        Uri.parse(url),
-        headers: {
-          'Authorization': 'Bearer $apiKey',
-          'Content-Type': 'application/json',
-        },
-      ).timeout(const Duration(seconds: 10));
+      if (!mounted) return;
+      setState(() => _isFetchingModels = false);
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final List<dynamic> models = data['data'] ?? [];
+      if (models.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(l10n.settingsAiProviderNoModelsFound)),
+        );
+        return;
+      }
 
-        if (models.isEmpty) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(l10n.settingsAiProviderNoModelsFound)),
-            );
-          }
-          return;
-        }
+      // Position the dropdown below the fetch button
+      final renderBox =
+          _fetchButtonKey.currentContext?.findRenderObject() as RenderBox?;
+      final offset = renderBox?.localToGlobal(Offset.zero) ?? Offset.zero;
+      final size = renderBox?.size ?? Size.zero;
 
-        if (mounted) {
-          final selectedModel = await showDialog<String>(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: Text(l10n.settingsAiProviderSelectModel),
-              content: SizedBox(
-                width: double.maxFinite,
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: models.length,
-                  itemBuilder: (context, index) {
-                    final model = models[index];
-                    final modelId = model['id'] ?? model.toString();
-                    return ListTile(
-                      title: Text(modelId),
-                      onTap: () => Navigator.pop(context, modelId),
-                    );
-                  },
-                ),
+      final selected = await showMenu<String>(
+        context: context,
+        position: RelativeRect.fromLTRB(
+          offset.dx,
+          offset.dy + size.height,
+          offset.dx + size.width,
+          offset.dy + size.height + 1,
+        ),
+        constraints: BoxConstraints(
+          minWidth: 220,
+          maxHeight: MediaQuery.of(context).size.height * 0.4,
+        ),
+        items: models
+            .map(
+              (modelId) => PopupMenuItem<String>(
+                value: modelId,
+                child: Text(modelId),
               ),
-            ),
-          );
+            )
+            .toList(),
+      );
 
-          if (selectedModel != null) {
-            _modelController.text = selectedModel;
-            setState(() => _isModified = true);
-          }
-        }
-      } else {
-        throw Exception('HTTP ${response.statusCode}: ${response.body}');
+      if (selected != null) {
+        _modelController.text = selected;
+        setState(() => _isModified = true);
       }
     } catch (e) {
       if (mounted) {
+        setState(() => _isFetchingModels = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content:
-                  Text(l10n.settingsAiProviderFetchModelsFailed(e.toString()))),
+            content:
+                Text(l10n.settingsAiProviderFetchModelsFailed(e.toString())),
+          ),
         );
       }
-    } finally {
-      setState(() => _isFetchingModels = false);
     }
   }
 
@@ -522,6 +622,7 @@ class _AiProviderDetailPageState extends ConsumerState<AiProviderDetailPage> {
           : false,
       apiKeys: _apiKeys,
       model: _modelController.text,
+      reasoningEffort: _reasoningEffort,
       keyIndex: 0,
       createdAt: widget.providerId != null
           ? ref
@@ -545,6 +646,16 @@ class _AiProviderDetailPageState extends ConsumerState<AiProviderDetailPage> {
   void _testConnection() {
     final l10n = L10n.of(context);
 
+    final enabledKeys = _apiKeys.where((k) => k.enabled && k.key.trim().isNotEmpty);
+    if (_urlController.text.trim().isEmpty ||
+        _modelController.text.trim().isEmpty ||
+        enabledKeys.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.settingsAiProviderNoValidKeys)),
+      );
+      return;
+    }
+
     // Save any pending changes before testing so the provider has the latest config
     if (_isModified) {
       if (_nameController.text.isEmpty || _urlController.text.isEmpty) {
@@ -567,6 +678,7 @@ class _AiProviderDetailPageState extends ConsumerState<AiProviderDetailPage> {
             : false,
         apiKeys: _apiKeys,
         model: _modelController.text,
+        reasoningEffort: _reasoningEffort,
         keyIndex: 0,
         createdAt: widget.providerId != null
             ? ref

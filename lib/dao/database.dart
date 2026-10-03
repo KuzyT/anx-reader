@@ -138,7 +138,7 @@ class DBHelper {
           path,
           version: dbVersion,
           onCreate: (db, version) async {
-            onUpgradeDatabase(db, 0, version);
+            await onUpgradeDatabase(db, 0, version);
           },
           onUpgrade: onUpgradeDatabase,
         );
@@ -156,7 +156,7 @@ class DBHelper {
           options: OpenDatabaseOptions(
             version: dbVersion,
             onCreate: (db, version) async {
-              onUpgradeDatabase(db, 0, version);
+              await onUpgradeDatabase(db, 0, version);
             },
             onUpgrade: onUpgradeDatabase,
           ),
@@ -392,13 +392,14 @@ class DBHelper {
       case 3:
         // remove former book style
         Prefs().removeBookStyle();
-        bookDao.selectBooks().then((books) {
-          for (var book in books) {
-            if (!File(book.coverFullPath).existsSync()) {
-              resetBookCover(book);
+        if (oldVersion != 0)
+          bookDao.selectBooks().then((books) {
+            for (var book in books) {
+              if (!File(book.coverFullPath).existsSync()) {
+                resetBookCover(book);
+              }
             }
-          }
-        });
+          });
         continue case4;
       case4:
       case 4:

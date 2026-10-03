@@ -134,9 +134,33 @@ const getBackground = (bgimgUrl) => {
   if (bgimgUrl === 'none') {
     bg = `none`
   } else {
-    bg = `url(${bgimgUrl}) repeat scroll 50% 50% / 100% 100%`
+    bg = `url(${bgimgUrl})`
   }
   return bg
+}
+
+const applyBackground = (el, bgimgUrl, blur, opacity, fit) => {
+  el.style.background = getBackground(bgimgUrl)
+  el.style.backgroundPosition = 'center center'
+  el.style.backgroundRepeat = 'no-repeat'
+  el.style.backgroundAttachment = 'scroll'
+  el.style.backgroundSize = fit === 'stretch' ? '100% 100%' : 'cover'
+  el.style.filter = (blur && blur > 0) ? `blur(${blur}px)` : ''
+  el.style.opacity = (opacity != null) ? opacity : 1
+  // Expand the background element beyond its grid cell when blur is active so
+  // the blurred edges are not clipped by the parent overflow:hidden boundary.
+  if (blur && blur > 0) {
+    const expand = `${blur * 2}px`
+    el.style.margin = `-${expand}`
+    el.style.width = `calc(100% + ${expand} * 2)`
+    el.style.height = `calc(100% + ${expand} * 2)`
+    // Keep the visual fill identical to the unblurred state; only the
+    // element bounds expand so blurred edges can bleed outside the viewport.
+  } else {
+    el.style.margin = ''
+    el.style.width = ''
+    el.style.height = ''
+  }
 }
 
 const makeMarginals = (length, part) => Array.from({ length }, () => {
@@ -293,19 +317,24 @@ class View {
     this.expand()
   }
   setImageSize() {
-    const { width, height, margin } = this.#layout
+    const { width, height, margin, columnWidth } = this.#layout
     const vertical = this.#vertical
     const doc = this.document
     for (const el of doc.body.querySelectorAll('img, svg, video')) {
       // preserve max size if they are already set
       const { maxHeight, maxWidth } = doc.defaultView.getComputedStyle(el)
+      // Cap max-width to the column width to prevent images from overflowing
+      // into the next page when the EPUB embeds a large inline max-width value.
+      const effectiveMaxWidth = vertical
+        ? `${width - margin * 2}px`
+        : columnWidth
+          ? `${columnWidth}px`
+          : (maxWidth !== 'none' && maxWidth !== '0px' ? maxWidth : '100%')
       setStylesImportant(el, {
         'max-height': vertical
           ? (maxHeight !== 'none' && maxHeight !== '0px' ? maxHeight : '100%')
           : `${height - margin * 2}px`,
-        'max-width': vertical
-          ? `${width - margin * 2}px`
-          : (maxWidth !== 'none' && maxWidth !== '0px' ? maxWidth : '100%'),
+        'max-width': effectiveMaxWidth,
         'object-fit': 'contain',
         'page-break-inside': 'avoid',
         'break-inside': 'avoid',
@@ -383,6 +412,7 @@ export class Paginator extends HTMLElement {
   static observedAttributes = [
     'flow', 'gap', 'top-margin', 'bottom-margin', 'background-color',
     'max-inline-size', 'max-block-size', 'max-column-count', 'column-threshold', 'bgimg-url',
+    'bgimg-blur', 'bgimg-opacity', 'bgimg-fit',
   ]
   #root = this.attachShadow({ mode: 'open' })
   #observer = new ResizeObserver(() => this.render())
@@ -405,6 +435,7 @@ export class Paginator extends HTMLElement {
   #mediaQueryListener
   #ignoreNativeScroll = false
   #pendingScrollFrame = null
+  #scrollEndTimer = null
   #touchState
   #touchScrolled
   #loadingNext = false
@@ -551,7 +582,7 @@ export class Paginator extends HTMLElement {
 
     this.#mediaQueryListener = () => {
       if (!this.#view) return
-      this.#background.style.background = getBackground(this.getAttribute('bgimg-url'))
+      this.#applyBackground()
     }
     this.#mediaQuery.addEventListener('change', this.#mediaQueryListener)
   }
@@ -574,11 +605,24 @@ export class Paginator extends HTMLElement {
         this.#top.style.setProperty('--_' + name, value)
         this.render()
         break
+      case 'bgimg-url':
+      case 'bgimg-blur':
+      case 'bgimg-opacity':
+      case 'bgimg-fit':
+        if (this.#background) this.#applyBackground()
+        break
     }
   }
   open(book) {
     this.bookDir = book.dir
     this.sections = book.sections
+  }
+  #applyBackground() {
+    const url = this.getAttribute('bgimg-url') ?? 'none'
+    const blur = parseFloat(this.getAttribute('bgimg-blur') ?? '0')
+    const opacity = parseFloat(this.getAttribute('bgimg-opacity') ?? '1')
+    const fit = this.getAttribute('bgimg-fit') ?? 'cover'
+    applyBackground(this.#background, url, blur, opacity, fit)
   }
   #createView() {
     if (this.#view) {
@@ -599,7 +643,7 @@ export class Paginator extends HTMLElement {
 
     // set background to `doc` background
     // this is needed because the iframe does not fill the whole element
-    this.#background.style.background = getBackground(this.getAttribute('bgimg-url'))
+    this.#applyBackground()
 
     const { width, height } = this.#container.getBoundingClientRect()
     const size = vertical ? height : width
@@ -934,6 +978,9 @@ export class Paginator extends HTMLElement {
     this.#touchScrolled = false
     if (this.scrolled) {
       this.#touchState = null
+      this.#touchScrolled = false
+      // Fire a final relocate after touch ends in scrolled mode
+      this.#afterScroll('scroll')
       return
     }
 
@@ -1090,6 +1137,27 @@ export class Paginator extends HTMLElement {
       this.start - size, this.end - size, this.#getRectMapper())
   }
   #afterScroll(reason) {
+    // During active touch scrolling, defer all relocation work
+    // to avoid expensive DOM traversal (getVisibleRange) per frame
+    if (reason === 'scroll' && (this.#touchState || this.#touchScrolled)) {
+      this.#pendingRelocate = null
+      return
+    }
+
+    // For scrolled mode, debounce relocate to also skip during momentum scroll
+    // Only compute after scrolling has stopped for 200ms
+    if (this.scrolled && reason === 'scroll') {
+      if (this.#scrollEndTimer) clearTimeout(this.#scrollEndTimer)
+      this.#scrollEndTimer = setTimeout(() => {
+        this.#scrollEndTimer = null
+        this.#doRelocate(reason)
+      }, 200)
+      return
+    }
+
+    this.#doRelocate(reason)
+  }
+  #doRelocate(reason) {
     const range = this.#getVisibleRange()
     // don't set new anchor if relocation was to scroll to anchor
     if (reason !== 'anchor') this.#anchor = range
@@ -1100,13 +1168,8 @@ export class Paginator extends HTMLElement {
     if (this.scrolled) detail.fraction = this.start / this.viewSize
     else if (this.pages > 0) {
       const { page, pages } = this
-      // this.#header.style.visibility = page > 1 ? 'visible' : 'hidden'
       detail.fraction = (page - 1) / (pages - 2)
       detail.size = 1 / (pages - 2)
-    }
-    if (!this.scrolled && reason === 'scroll' && (this.#touchState || this.#touchScrolled)) {
-      this.#pendingRelocate = detail
-      return
     }
 
     this.#pendingRelocate = null
@@ -1295,7 +1358,7 @@ export class Paginator extends HTMLElement {
       $style.textContent = style
     } else $style.textContent = styles
 
-    this.#background.style.background = getBackground(this.getAttribute('bgimg-url'))
+    this.#applyBackground()
 
     // needed because the resize observer doesn't work in Firefox
     this.#view?.document?.fonts?.ready?.then(() => this.#view.expand())
@@ -1312,6 +1375,10 @@ export class Paginator extends HTMLElement {
     if (this.#pendingScrollFrame) {
       cancelAnimationFrame(this.#pendingScrollFrame)
       this.#pendingScrollFrame = null
+    }
+    if (this.#scrollEndTimer) {
+      clearTimeout(this.#scrollEndTimer)
+      this.#scrollEndTimer = null
     }
     this.#pendingRelocate = null
   }

@@ -37,10 +37,10 @@ packages:
     dependency: transitive
     description:
       name: anthropic_sdk_dart
-      sha256: "30162d70384f38f98f22e2402776f28d260b721fef684893dbed2a3108e72428"
+      sha256: ab9fb1aaf866e2de7b2f86cdb81221763e7559e42abfd6e345588df55e2150dc
       url: "https://pub.dev"
     source: hosted
-    version: "0.3.1"
+    version: "1.3.2"
   archive:
     dependency: "direct main"
     description:
@@ -305,6 +305,22 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.2.0"
+  ci:
+    dependency: transitive
+    description:
+      name: ci
+      sha256: "145d095ce05cddac4d797a158bc4cf3b6016d1fe63d8c3d2fbd7212590adca13"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.1.0"
+  cli_util:
+    dependency: transitive
+    description:
+      name: cli_util
+      sha256: ff6785f7e9e3c38ac98b2fb035701789de90154024a75b6cb926445e83197d1c
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.4.2"
   clock:
     dependency: transitive
     description:
@@ -410,6 +426,22 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.0.8"
+  custom_lint:
+    dependency: "direct dev"
+    description:
+      name: custom_lint
+      sha256: "409c485fd14f544af1da965d5a0d160ee57cd58b63eeaa7280a4f28cf5bda7f1"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.7.5"
+  custom_lint_builder:
+    dependency: transitive
+    description:
+      name: custom_lint_builder
+      sha256: "107e0a43606138015777590ee8ce32f26ba7415c25b722ff0908a6f5d7a4c228"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.7.5"
   custom_lint_core:
     dependency: transitive
     description:
@@ -944,12 +976,11 @@ packages:
     source: hosted
     version: "0.3.3+1"
   googleai_dart:
-    dependency: transitive
+    dependency: "direct overridden"
     description:
-      name: googleai_dart
-      sha256: "22f8bb5e621067f4c9cd2f88db240bbd7f1ea54b960c55c348104c74794a97a7"
-      url: "https://pub.dev"
-    source: hosted
+      path: "third_party/googleai_dart"
+      relative: true
+    source: path
     version: "3.0.0"
   googleapis:
     dependency: transitive
@@ -1015,6 +1046,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.5.0+2"
+  hotreloader:
+    dependency: transitive
+    description:
+      name: hotreloader
+      sha256: bc167a1163807b03bada490bfe2df25b0d744df359227880220a5cbd04e5734b
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.3.0"
   html:
     dependency: "direct main"
     description:
@@ -1027,10 +1066,10 @@ packages:
     dependency: "direct main"
     description:
       name: http
-      sha256: bb2ce4590bc2667c96f318d68cac1b5a7987ec819351d32b1c987239a815e007
+      sha256: "87721a4a50b19c7f1d49001e51409bddc46303966ce89a65af4f4e6004896412"
       url: "https://pub.dev"
     source: hosted
-    version: "1.5.0"
+    version: "1.6.0"
   http_multi_server:
     dependency: transitive
     description:
@@ -1047,14 +1086,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.1.2"
-  icons_plus:
+  iconsx_plus:
     dependency: "direct main"
     description:
-      name: icons_plus
-      sha256: "8e2f601b8605d45dd55b106a0da084a1809125077a49574ca22e8bcd5b6e86f0"
+      name: iconsx_plus
+      sha256: b7e0e88982cbcbcf6f6f7adde560a53b091adb8677760339d4c0af4ee0aa6f44
       url: "https://pub.dev"
     source: hosted
-    version: "5.0.0"
+    version: "1.0.1"
   image:
     dependency: "direct main"
     description:
@@ -1107,10 +1146,10 @@ packages:
     dependency: "direct main"
     description:
       name: intl
-      sha256: "3df61194eb431efc39c4ceba583b95633a403f46c9fd341e550ce0bfa50e9aa5"
+      sha256: "1ca20c894b1717686a2319b8548763d812bc0aabdac580420a44c5178c57a867"
       url: "https://pub.dev"
     source: hosted
-    version: "0.20.2"
+    version: "0.20.3"
   introduction_screen:
     dependency: "direct main"
     description:
@@ -1154,42 +1193,45 @@ packages:
   langchain:
     dependency: "direct main"
     description:
-      name: langchain
-      sha256: b7035e0903953cb065734499296e66d9fa0f6e15934aa2f57389b9fb6b001aab
-      url: "https://pub.dev"
-    source: hosted
+      path: "packages/langchain"
+      ref: "310fb6b3"
+      resolved-ref: "310fb6b3e9f7ff4f6b10b1a82838fa50a33f659f"
+      url: "https://github.com/Anxcye/langchain_dart.git"
+    source: git
     version: "0.8.1"
   langchain_anthropic:
     dependency: "direct main"
     description:
-      name: langchain_anthropic
-      sha256: e78c81064733f6dbc67b5ea06cc62454581bede69a4f06abe7ebf1347716be78
-      url: "https://pub.dev"
-    source: hosted
+      path: "packages/langchain_anthropic"
+      ref: "310fb6b3"
+      resolved-ref: "310fb6b3e9f7ff4f6b10b1a82838fa50a33f659f"
+      url: "https://github.com/Anxcye/langchain_dart.git"
+    source: git
     version: "0.3.1"
   langchain_core:
     dependency: "direct main"
     description:
-      name: langchain_core
-      sha256: fce3cd0e31dcbac80d209f6361207936a58b05506b800f13227cbe83f6e3e721
-      url: "https://pub.dev"
-    source: hosted
+      path: "packages/langchain_core"
+      ref: "310fb6b3"
+      resolved-ref: "310fb6b3e9f7ff4f6b10b1a82838fa50a33f659f"
+      url: "https://github.com/Anxcye/langchain_dart.git"
+    source: git
     version: "0.4.1"
   langchain_google:
     dependency: "direct main"
     description:
-      name: langchain_google
-      sha256: "37e4917c42361149b41fe883e7ff9b0fc136ec7b2c6e4545c6d886e22656ec94"
-      url: "https://pub.dev"
-    source: hosted
+      path: "third_party/langchain_google"
+      relative: true
+    source: path
     version: "0.7.1+2"
   langchain_openai:
     dependency: "direct main"
     description:
-      name: langchain_openai
-      sha256: "23ed96ece5bc27ec95d1b720bce61267e6db578d24134ddf80b715184e932330"
-      url: "https://pub.dev"
-    source: hosted
+      path: "packages/langchain_openai"
+      ref: "310fb6b3"
+      resolved-ref: "310fb6b3e9f7ff4f6b10b1a82838fa50a33f659f"
+      url: "https://github.com/Anxcye/langchain_dart.git"
+    source: git
     version: "0.8.1+1"
   langchain_tiktoken:
     dependency: transitive
@@ -1259,10 +1301,10 @@ packages:
     dependency: transitive
     description:
       name: matcher
-      sha256: dc0b7dc7651697ea4ff3e69ef44b0407ea32c487a39fff6a4004fa585e901861
+      sha256: "31bd099b47c10cd1aeb55146a2d46ce0277630ecef3f7dae54ad7873f36696cd"
       url: "https://pub.dev"
     source: hosted
-    version: "0.12.19"
+    version: "0.12.20"
   material_color_utilities:
     dependency: transitive
     description:
@@ -1283,10 +1325,10 @@ packages:
     dependency: transitive
     description:
       name: meta
-      sha256: "23f08335362185a5ea2ad3a4e597f1375e78bce8a040df5c600c8d3552ef2394"
+      sha256: "307249ce4ff29d58a18e97f6345f539382eb9c9c29ecda628900f31de0443dd9"
       url: "https://pub.dev"
     source: hosted
-    version: "1.17.0"
+    version: "1.19.0"
   mime:
     dependency: transitive
     description:
@@ -1299,10 +1341,10 @@ packages:
     dependency: "direct main"
     description:
       name: mongol
-      sha256: b5c98b3081965ebc1ac4fb26af4aad4875e21e496e52d58d7a48a74d8e8440b9
+      sha256: "52f54a14a558e5719e21f2be5ccd577c0a59d90b3dce8887f28ca79385fb7e53"
       url: "https://pub.dev"
     source: hosted
-    version: "9.0.0"
+    version: "9.3.0"
   motor:
     dependency: transitive
     description:
@@ -1339,10 +1381,10 @@ packages:
     dependency: transitive
     description:
       name: openai_dart
-      sha256: "037605a210cb3b1d8ac72b11a4ace26f25ee9267aaf981d2af1d7f0524adcbf5"
+      sha256: "4731f94ea9a09cd9e92333debcfb87efda2764718e506538206df9f540e9ab60"
       url: "https://pub.dev"
     source: hosted
-    version: "0.6.2"
+    version: "1.4.0"
   package_config:
     dependency: transitive
     description:
@@ -1620,6 +1662,14 @@ packages:
     description:
       name: riverpod_generator
       sha256: "44a0992d54473eb199ede00e2260bd3c262a86560e3c6f6374503d86d0580e36"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.6.5"
+  riverpod_lint:
+    dependency: "direct dev"
+    description:
+      name: riverpod_lint
+      sha256: "89a52b7334210dbff8605c3edf26cfe69b15062beed5cbfeff2c3812c33c9e35"
       url: "https://pub.dev"
     source: hosted
     version: "2.6.5"
@@ -1995,10 +2045,10 @@ packages:
     dependency: transitive
     description:
       name: test_api
-      sha256: "8161c84903fd860b26bfdefb7963b3f0b68fee7adea0f59ef805ecca346f0c7a"
+      sha256: "2a122cbe059f8b610d3a5415f42e255b6c17b1f21eee1d960f31080237fb4f11"
       url: "https://pub.dev"
     source: hosted
-    version: "0.7.10"
+    version: "0.7.12"
   time:
     dependency: transitive
     description:
@@ -2139,10 +2189,10 @@ packages:
     dependency: transitive
     description:
       name: vector_math
-      sha256: d530bd74fea330e6e364cda7a85019c434070188383e1cd8d9777ee586914c5b
+      sha256: f36f9f3be64c6198714492bb455c11056e33e2f85d9a0b676a48301e44fdcf47
       url: "https://pub.dev"
     source: hosted
-    version: "2.2.0"
+    version: "2.4.2"
   vertex_ai:
     dependency: transitive
     description:
@@ -2281,5 +2331,5 @@ packages:
     source: hosted
     version: "3.1.3"
 sdks:
-  dart: ">=3.9.0 <4.0.0"
+  dart: ">=3.11.0-0 <4.0.0"
   flutter: ">=3.35.0"

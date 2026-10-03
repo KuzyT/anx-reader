@@ -2,7 +2,7 @@ name: anx_reader
 description: "An e-book reader."
 publish_to: 'none'
 
-version: 1.13.0+6316
+version: 1.15.0+6341
 
 environment:
   sdk: '>=3.5.2 <4.0.0'
@@ -22,7 +22,7 @@ dependencies:
   shared_preferences: ^2.2.2
   provider: ^6.1.2
   flutter_gen_runner: ^5.4.0
-  intl: 0.20.2
+  intl: 0.20.3
   flutter_colorpicker: ^1.0.3
   html: ^0.15.4
   flutter_html: ^3.0.0-beta.2
@@ -50,7 +50,7 @@ dependencies:
       url: https://github.com/Anxcye/contentsize_tabbarview.git
       ref: feat/animation
   wakelock_plus: ^1.2.5
-  icons_plus: ^5.0.0
+  iconsx_plus: ^1.0.1
   url_launcher: ^6.2.6
   sqflite_common_ffi: ^2.3.3
   battery_plus: ^6.2.1
@@ -100,7 +100,7 @@ dependencies:
   flutter_slidable: ^4.0.0
   cached_network_image: ^3.4.1
   lpinyin: ^2.0.3
-  mongol: ^9.0.0
+  mongol: ^9.3.0
   introduction_screen: ^3.1.17
   flutter_floating_bottom_bar: ^1.3.0
   langchain: ^0.8.1
@@ -130,25 +130,42 @@ dependencies:
   haptic_feedback: ^0.6.4+2
   in_app_purchase_android: ^0.4.0+8
 
-# dependency_overrides:
-#   openai_dart:
-## git:
-#       url: https://github.com/Anxcye/langchain_dart.git
-#       ref: bb06c17ca667a906e3e37154b0bda95023d0c9bd
-#       path: packages/openai_dart
-# dependency_overrides:
-#   analyzer: ^8.0.0
+dependency_overrides:
+  googleai_dart:
+    path: third_party/googleai_dart
+  langchain_google:
+    path: third_party/langchain_google
+  langchain:
+    git:
+      url: https://github.com/Anxcye/langchain_dart.git
+      ref: 310fb6b3
+      path: packages/langchain
+  langchain_core:
+    git:
+      url: https://github.com/Anxcye/langchain_dart.git
+      ref: 310fb6b3
+      path: packages/langchain_core
+  langchain_openai:
+    git:
+      url: https://github.com/Anxcye/langchain_dart.git
+      ref: 310fb6b3
+      path: packages/langchain_openai
+  langchain_anthropic:
+    git:
+      url: https://github.com/Anxcye/langchain_dart.git
+      ref: 310fb6b3
+      path: packages/langchain_anthropic
+#  analyzer: ^8.0.0
 
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
-#  test: any
   build_runner: ^2.4.13
-#  custom_lint: ^0.7.5
+  custom_lint: ^0.7.5
   riverpod_generator: ^2.4.3
-#  riverpod_lint: ^2.3.13
+  riverpod_lint: ^2.3.13
   freezed: ^3.0.2
   json_serializable: ^6.9.0
 #  flutter_launcher_icons: ^0.11.0

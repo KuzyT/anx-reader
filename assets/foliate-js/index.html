@@ -50,6 +50,10 @@
   <main></main>
 </div>
 <script>
+  // Prevent the default WebView2 right-click context menu on Windows.
+  document.addEventListener('contextmenu', e => { e.preventDefault(); });
+</script>
+<script>
   (function () {
     const ua = navigator.userAgent || '';
     const platform = navigator.platform || '';

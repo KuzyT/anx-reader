@@ -171,6 +171,72 @@ const handleSelection = (view, doc, index) => {
   });
 };
 
+const AUTO_PAGE_DELAY_MS = 1000;
+const AUTO_PAGE_SCREEN_BOTTOM_THRESHOLD = 0.9;
+const AUTO_PAGE_POST_NEXT_RECHECK_INTERVAL_MS = 120;
+const AUTO_PAGE_POST_NEXT_RECHECK_MAX_ATTEMPTS = 12;
+const AUTO_PAGE_POST_NEXT_RECHECK_INITIAL_DELAY_MS = 80;
+
+const getAutoPageState = (view) => {
+  if (!view.__anxAutoPageState) {
+    view.__anxAutoPageState = {
+      sessionId: 0,
+      currentPageKey: null,
+      triggeredPages: new Set(),
+      pendingFromPageKey: null,
+      pendingTimer: null,
+      postNextRecheckTimer: null,
+      postNextRecheckAttempts: 0,
+      awaitingPageAdvanceFromKey: null,
+    };
+  }
+  return view.__anxAutoPageState;
+};
+
+const clearAutoPageTimer = (state) => {
+  if (!state.pendingTimer) return;
+  clearTimeout(state.pendingTimer);
+  state.pendingTimer = null;
+};
+
+const clearAutoPagePostNextRecheck = (state) => {
+  if (!state.postNextRecheckTimer) return;
+  clearTimeout(state.postNextRecheckTimer);
+  state.postNextRecheckTimer = null;
+};
+
+const resetAutoPageSessionState = (state) => {
+  state.currentPageKey = null;
+  state.triggeredPages.clear();
+  state.pendingFromPageKey = null;
+  state.postNextRecheckAttempts = 0;
+  state.awaitingPageAdvanceFromKey = null;
+};
+
+const startAutoPageSession = (view) => {
+  const state = getAutoPageState(view);
+  clearAutoPageTimer(state);
+  clearAutoPagePostNextRecheck(state);
+  state.sessionId += 1;
+  resetAutoPageSessionState(state);
+  return state;
+};
+
+const stopAutoPageSession = (view) => {
+  const state = getAutoPageState(view);
+  clearAutoPageTimer(state);
+  clearAutoPagePostNextRecheck(state);
+  resetAutoPageSessionState(state);
+};
+
+const getAutoPageLocationKey = (lastLocation, index) => {
+  if (!lastLocation) return `index:${index}:none`;
+  const cfi = lastLocation.cfi ?? '';
+  const current = lastLocation.location?.current ?? '';
+  const chapter = lastLocation.chapterLocation?.current ?? '';
+  return `index:${index}|cfi:${cfi}|loc:${current}|chapter:${chapter}`;
+};
+
 const setSelectionHandler = (view, doc, index) => {
   let hasActiveSelection = false;
   let lastPointerUpRange = null;
@@ -192,10 +258,36 @@ const setSelectionHandler = (view, doc, index) => {
     lastPointerUpRange = null;
     doc.__anxSelectionClearedAt = Date.now();
     doc.__anxSuppressClick = true;
+    stopAutoPageSession(view);
     callFlutter('onSelectionCleared');
   };
 
   doc.addEventListener('selectionchange', handleSelectionStateChange);
+
+  // Page-turn keys must turn pages even while text is selected.
+  // Without this, the WebView uses arrows to pan/extend selection (#966).
+  doc.addEventListener('keydown', (e) => {
+    const nextKeys = new Set(['ArrowRight', 'ArrowDown', 'PageDown', ' ']);
+    const prevKeys = new Set(['ArrowLeft', 'ArrowUp', 'PageUp']);
+    if (!nextKeys.has(e.key) && !prevKeys.has(e.key)) return;
+    // Allow shortcuts with modifiers other than Shift (e.g. Ctrl+Arrow)
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    const selection = doc.getSelection();
+    if (selection && selection.rangeCount > 0) {
+      selection.removeAllRanges();
+    }
+    if (typeof window.clearSelection === 'function') {
+      try { window.clearSelection(); } catch (_) {}
+    }
+    if (nextKeys.has(e.key)) {
+      nextPage();
+    } else {
+      prevPage();
+    }
+  }, true);
 
   const rangesEqual = (a, b) => (
     a.startContainer === b.startContainer
@@ -228,6 +320,12 @@ const setSelectionHandler = (view, doc, index) => {
     });
   }
   else if (navigator.platform.includes('Win')) {
+    // Prevent the default WebView2 context menu (back, reload, save as, print)
+    // from appearing on right-click inside the book content frame.
+    doc.addEventListener('contextmenu', e => {
+      e.preventDefault();
+    });
+
     if (navigator.maxTouchPoints > 0) {
       // In Edge, the longpress by touch generates following touch event sequence:
       // pointerover -> enter -> down -> move(n) -> cancel -> out -> leave
@@ -298,6 +396,7 @@ const setSelectionHandler = (view, doc, index) => {
     });
   } else { // Android
     let hasNativeSelectionStarted = false;
+    let longPressSettleTimer;
 
     doc.addEventListener('pointerdown', () => {
       hasNativeSelectionStarted = false;
@@ -321,12 +420,25 @@ const setSelectionHandler = (view, doc, index) => {
       // We block it to prevent the custom menu from interfering with the drag.
       if (!hasNativeSelectionStarted) {
         e.preventDefault();
+        // A long-press released without dragging gets no second contextmenu, and the
+        // touch is cancelled so there is no pointerup either. Open the menu once the
+        // selection has stayed unchanged for a moment; a drag changes it and is
+        // handled by the release event below instead.
+        const pressed = getSelectionRange(doc.getSelection())?.cloneRange();
+        clearTimeout(longPressSettleTimer);
+        longPressSettleTimer = setTimeout(() => {
+          const current = getSelectionRange(doc.getSelection());
+          if (!pressed || !current || !rangesEqual(pressed, current)) return;
+          if (shouldSkipPointerUp()) return;
+          handleSelection(view, doc, index);
+        }, 600);
         return;
       }
 
       // If we have entered native selection mode (pointercancel happened),
       // this contextmenu event is likely triggered by the system or user interaction
       // after the selection phase (e.g. on release). We handle it.
+      if (shouldSkipPointerUp()) return;
       handleSelection(view, doc, index);
     });
   }
@@ -340,6 +452,7 @@ const setSelectionHandler = (view, doc, index) => {
       const container = view.shadowRoot.querySelector('foliate-paginator').shadowRoot.querySelector("#container");
       if (!container) return;
       globalThis.originalScrollLeft = container.scrollLeft;
+      startAutoPageSession(view);
     });
 
 
@@ -350,21 +463,103 @@ const setSelectionHandler = (view, doc, index) => {
 
       const selRange = getSelectionRange(doc.getSelection())
       if (!selRange) return
-
-      if (globalThis.pageDebounceTimer) {
-        clearTimeout(globalThis.pageDebounceTimer);
-        globalThis.pageDebounceTimer = null;
-      }
+      if (!lastLocation.range) return;
 
       const container = view.shadowRoot.querySelector('foliate-paginator').shadowRoot.querySelector("#container");
+      if (!container) return;
 
-      if (selRange.compareBoundaryPoints(Range.END_TO_END, lastLocation.range) >= 0) {
-        globalThis.pageDebounceTimer = setTimeout(async () => {
-          await view.next();
-          globalThis.originalScrollLeft = container.scrollLeft;
-          globalThis.pageDebounceTimer = null;
-        }, 1000);
-        return
+      const state = getAutoPageState(view);
+      if (state.sessionId === 0) {
+        startAutoPageSession(view);
+      }
+
+      const pageKey = getAutoPageLocationKey(lastLocation, index);
+      if (state.currentPageKey !== pageKey) {
+        if (
+          state.awaitingPageAdvanceFromKey
+          && state.awaitingPageAdvanceFromKey !== pageKey
+        ) {
+          state.awaitingPageAdvanceFromKey = null;
+          state.postNextRecheckAttempts = 0;
+          clearAutoPagePostNextRecheck(state);
+        }
+        state.currentPageKey = pageKey;
+      }
+
+      if (state.pendingFromPageKey && state.pendingFromPageKey !== pageKey) {
+        clearAutoPageTimer(state);
+        state.pendingFromPageKey = null;
+      }
+
+      let compareToPageEnd;
+      try {
+        compareToPageEnd = selRange.compareBoundaryPoints(Range.END_TO_END, lastLocation.range);
+      } catch {
+        return;
+      }
+      const rangeReachedPageEnd = compareToPageEnd >= 0;
+      const selectionPos = getPosition(selRange);
+      const nearScreenBottom = selectionPos.bottom >= AUTO_PAGE_SCREEN_BOTTOM_THRESHOLD;
+      const reachedCurrentPageBottom = rangeReachedPageEnd && nearScreenBottom;
+
+      if (!reachedCurrentPageBottom && state.pendingFromPageKey === pageKey) {
+        clearAutoPageTimer(state);
+        state.pendingFromPageKey = null;
+      }
+
+      if (reachedCurrentPageBottom) {
+        if (state.pendingFromPageKey === pageKey) {
+          if (state.pendingTimer) return;
+          state.pendingFromPageKey = null;
+        }
+        if (state.triggeredPages.has(pageKey)) return;
+
+        state.pendingFromPageKey = pageKey;
+        clearAutoPagePostNextRecheck(state);
+        state.awaitingPageAdvanceFromKey = null;
+        state.postNextRecheckAttempts = 0;
+        clearAutoPageTimer(state);
+        const scheduledSessionId = state.sessionId;
+        state.pendingTimer = setTimeout(async () => {
+          state.pendingTimer = null;
+          if (scheduledSessionId !== state.sessionId) return;
+          state.triggeredPages.add(pageKey);
+          try {
+            await view.next();
+            const latestContainer = view.shadowRoot.querySelector('foliate-paginator').shadowRoot.querySelector("#container");
+            if (latestContainer) {
+              globalThis.originalScrollLeft = latestContainer.scrollLeft;
+            }
+          } finally {
+            if (state.pendingFromPageKey === pageKey) {
+              state.pendingFromPageKey = null;
+            }
+            state.awaitingPageAdvanceFromKey = pageKey;
+            state.postNextRecheckAttempts = 0;
+            clearAutoPagePostNextRecheck(state);
+            const runPostNextSelectionRecheck = () => {
+              state.postNextRecheckTimer = null;
+              if (scheduledSessionId !== state.sessionId) return;
+              if (state.awaitingPageAdvanceFromKey !== pageKey) return;
+              state.postNextRecheckAttempts += 1;
+              try {
+                doc.dispatchEvent(new Event('selectionchange'));
+              } catch {
+                return;
+              }
+              if (state.postNextRecheckAttempts >= AUTO_PAGE_POST_NEXT_RECHECK_MAX_ATTEMPTS) return;
+              state.postNextRecheckTimer = setTimeout(
+                runPostNextSelectionRecheck,
+                AUTO_PAGE_POST_NEXT_RECHECK_INTERVAL_MS,
+              );
+            };
+            state.postNextRecheckTimer = setTimeout(
+              runPostNextSelectionRecheck,
+              AUTO_PAGE_POST_NEXT_RECHECK_INITIAL_DELAY_MS,
+            );
+          }
+        }, AUTO_PAGE_DELAY_MS);
+        return;
       }
 
       const preventScroll = () => {
@@ -517,13 +712,9 @@ const getCSS = ({ fontSize,
 
   const writingModeCSS = writingMode === 'auto' ? '' : `writing-mode: ${writingMode} !important;`
 
-  const backgroundImageCSS = !backgroundImage || flow || backgroundImage === 'none' ? 'background: none !important;' :
-    `background-image: url('${backgroundImage}') !important;
-    background-size: 100% 100% !important;
-    background-repeat: repeat !important;
-    background-attachment: scroll !important; 
-    background-position: center center !important;
-    background-clip: content-box !important;`
+  // Background images are rendered by the paginator layer so blur/opacity
+  // controls apply consistently across the whole reading surface.
+  const backgroundImageCSS = 'background: none !important;'
 
 
   // Some CSS selectors are inspired by https://github.com/readest/foliate-js
@@ -547,6 +738,9 @@ const getCSS = ({ fontSize,
     }
 
     body {
+        /* Force user writing-mode over EPUB body rules (e.g. vertical-rl in template_rv.css).
+           html alone is not enough: body has its own writing-mode from the book stylesheet. */
+        ${writingModeCSS}
         background: none !important;
         background-color: transparent;
         padding: 0;
@@ -727,6 +921,27 @@ const getCSS = ({ fontSize,
     
     ${customCSSEnabled && customCSS ? customCSS : ''}
 `}
+
+const fixHeadingColor = (themeColor) => {
+  const headings = document.querySelectorAll('h1, h2, h3, h4, h5, h6')
+  const blackPatterns = [
+    /^#000000?$/i,
+    /^rgb\(\s*0\s*,\s*0\s*,\s*0\s*\)$/i,
+    /^rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*1\s*\)$/i,
+    /^black$/i
+  ]
+  
+  headings.forEach(heading => {
+    const style = window.getComputedStyle(heading)
+    const color = style.color
+    
+    const isBlack = blackPatterns.some(pattern => pattern.test(color.trim()))
+    
+    if (isBlack) {
+      heading.style.setProperty('color', themeColor, 'important')
+    }
+  })
+}
 
 const convertChineseHandler = (mode, doc) => {
   console.log('convertChinese', mode)
@@ -1504,6 +1719,9 @@ const setStyle = (oldStyle) => {
   reader.view.renderer.setAttribute('max-column-count', style.maxColumnCount)
   reader.view.renderer.setAttribute('column-threshold', `${style.columnThreshold}px`)
   reader.view.renderer.setAttribute('bgimg-url', style.backgroundImage)
+  reader.view.renderer.setAttribute('bgimg-blur', style.bgimgBlur ?? 0)
+  reader.view.renderer.setAttribute('bgimg-opacity', style.bgimgOpacity ?? 1)
+  reader.view.renderer.setAttribute('bgimg-fit', style.bgimgFit ?? 'cover')
 
   turn.animated ? reader.view.renderer.setAttribute('animated', 'true')
     : reader.view.renderer.removeAttribute('animated')
@@ -1531,6 +1749,10 @@ const setStyle = (oldStyle) => {
     headingFontSize: style.headingFontSize
   }
   reader.view.renderer.setStyles?.(getCSS(newStyle))
+
+  if (!style.useBookStyles && style.fontColor) {
+    fixHeadingColor(style.fontColor)
+  }
 
   if (!oldStyle) {
     return

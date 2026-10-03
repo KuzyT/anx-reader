@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:anx_reader/utils/ai_reasoning_parser.dart';
 import 'dart:ui';
 
 import 'package:anx_reader/config/shared_preference_provider.dart';
@@ -58,7 +59,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:icons_plus/icons_plus.dart';
+import 'package:iconsx_plus/iconsx_plus.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -210,11 +211,17 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
       ModalRoute.of(context)?.isCurrent ?? false;
 
   void prevPage() {
-    webViewController.evaluateJavascript(source: 'prevPage()');
+    webViewController.evaluateJavascript(source: '''
+      if (typeof clearSelection === 'function') { clearSelection(); }
+      prevPage();
+      ''');
   }
 
   void nextPage() {
-    webViewController.evaluateJavascript(source: 'nextPage()');
+    webViewController.evaluateJavascript(source: '''
+      if (typeof clearSelection === 'function') { clearSelection(); }
+      nextPage();
+      ''');
   }
 
   void prevChapter() {
@@ -290,7 +297,12 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
       _selectionClearPending = false;
       _lastSelectionContextText = null;
       removeOverlay();
+      restoreReaderFocus();
     }
+  }
+
+  void restoreReaderFocus() {
+    readingPageKey.currentState?.requestReaderFocus();
   }
 
   void changeTheme(ReadTheme readTheme) {
@@ -334,6 +346,9 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
         writingMode: '${Prefs().writingMode.code}',
         textAlign: '${Prefs().textAlignment.code}',
         backgroundImage: '$bgimgUrl',
+        bgimgBlur: ${Prefs().bgimg.blur},
+        bgimgOpacity: ${Prefs().bgimg.opacity},
+        bgimgFit: '${Prefs().bgimgFit.code}',
         customCSS: `${Prefs().customCSS.replaceAll('`', '\\`')}`,
         customCSSEnabled: ${Prefs().customCSSEnabled},
         useBookStyles: ${Prefs().useBookStyles},
@@ -342,6 +357,23 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
       })
       ''');
     });
+  }
+
+  void changeBgimgEffect() {
+    if (!mounted) return;
+    final bgimg = Prefs().bgimg;
+    final bgimgUrl = bgimg.getEffectiveUrl(
+      isDarkMode: isDarkMode,
+      autoAdjust: Prefs().autoAdjustReadingTheme,
+    );
+    webViewController.evaluateJavascript(source: '''
+      changeStyle({
+        backgroundImage: '$bgimgUrl',
+        bgimgBlur: ${bgimg.blur},
+        bgimgOpacity: ${bgimg.opacity},
+        bgimgFit: '${Prefs().bgimgFit.code}',
+      })
+    ''');
   }
 
   void changeReadingRules(ReadingRules readingRules) {
@@ -432,6 +464,16 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
         'matchWholeWords': false,
       })
     ''');
+  }
+
+  Future<void> runAiBookSearch(String keyword) async {
+    ref.read(tocSearchProvider.notifier).start(keyword);
+    final escaped = jsonEncode(keyword);
+    await webViewController.evaluateJavascript(source: 'clearSearch()');
+    await webViewController.evaluateJavascript(
+      source:
+          'search($escaped, {"scope":"book","matchCase":false,"matchDiacritics":false,"matchWholeWords":false})',
+    );
   }
 
   void _clearSearchHighlights() {
@@ -741,11 +783,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
   }
 
   String _normalizeWordForCache(String word) {
-    return word
-        .trim()
-        .replaceAll('’', "'")
-        .replaceAll('`', "'")
-        .toLowerCase();
+    return word.trim().replaceAll('’', "'").replaceAll('`', "'").toLowerCase();
   }
 
   _WordCacheEntry _decodeWordCacheEntry(String rawValue) {
@@ -843,8 +881,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
       final normalizedWord = _normalizeWordForCache(originalWord);
       if (normalizedWord.isEmpty || translatedWord.isEmpty) continue;
 
-      final normalizedLevel =
-          _normalizeCefrLevel(levelRaw, allowNull: true);
+      final normalizedLevel = _normalizeCefrLevel(levelRaw, allowNull: true);
       result[normalizedWord] = _WordCacheEntry(
         translation: translatedWord,
         level: normalizedLevel,
@@ -899,8 +936,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
   }
 
   bool _isAiWordLevelRefineEnabledForBook([int? bookId]) {
-    return Prefs()
-        .isAiRefineWordLevelsEnabledForBook(bookId ?? widget.book.id);
+    return Prefs().isAiRefineWordLevelsEnabledForBook(bookId ?? widget.book.id);
   }
 
   void _scheduleAiWordLevelRefinement(Set<String> words) {
@@ -913,18 +949,16 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
       return;
     }
 
-    final normalizedWords = words
-        .map(_normalizeWordForCache)
-        .where((w) => w.isNotEmpty)
-        .toSet();
+    final normalizedWords =
+        words.map(_normalizeWordForCache).where((w) => w.isNotEmpty).toSet();
     if (normalizedWords.isEmpty) return;
     AiTranslationStatusService().addLog(
       message:
           'AI refine scheduled: ${normalizedWords.length} words (book ${widget.book.id})',
     );
 
-    final bucket = _pendingWordLevelRefineWords
-        .putIfAbsent(widget.book.id, () => <String>{});
+    final bucket = _pendingWordLevelRefineWords.putIfAbsent(
+        widget.book.id, () => <String>{});
     bucket.addAll(normalizedWords);
 
     if (_activeWordLevelRefineBooks.contains(widget.book.id)) {
@@ -965,9 +999,8 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
       decodedCache[word] = _decodeWordCacheEntry(entry.value);
     }
 
-    final missingInWordCache = candidateWords
-        .where((word) => !decodedCache.containsKey(word))
-        .toSet();
+    final missingInWordCache =
+        candidateWords.where((word) => !decodedCache.containsKey(word)).toSet();
 
     if (missingInWordCache.isNotEmpty && markedTexts.isNotEmpty) {
       final seeded = <String, _WordCacheEntry>{};
@@ -1035,7 +1068,8 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
           message:
               'AI refine applied: word levels updated, refreshing interlinear cache',
         );
-        await translationCacheDao.clearSpecific(bookId, level: _wordWiseCacheLevel);
+        await translationCacheDao.clearSpecific(bookId,
+            level: _wordWiseCacheLevel);
         await webViewController.evaluateJavascript(source: '''
 (() => {
   const reader = window.reader;
@@ -1174,8 +1208,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
     final requestId = statusService.beginRequest(
       itemsCount: words.length,
       source: 'ai_refine_levels',
-      message:
-          'AI refine started: ${words.length} words (${sourceLang.code})',
+      message: 'AI refine started: ${words.length} words (${sourceLang.code})',
     );
     final stopwatch = Stopwatch()..start();
 
@@ -1219,7 +1252,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
       String response, List<String> requestedWords) {
     if (response.trim().isEmpty) return {};
 
-    String cleaned = response.trim();
+    String cleaned = splitReasoningEnvelope(response).answerContent.trim();
     final fenceRegex = RegExp(r'```(?:json)?\s*\n?([\s\S]*?)\n?\s*```');
     final fenceMatch = fenceRegex.firstMatch(cleaned);
     if (fenceMatch != null) {
@@ -1245,9 +1278,8 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
         final word = _normalizeWordForCache(entry.key.toString());
         if (word.isEmpty) continue;
         final level = entry.value?.toString();
-        final normalized = level == null
-            ? null
-            : _normalizeCefrLevel(level, allowNull: true);
+        final normalized =
+            level == null ? null : _normalizeCefrLevel(level, allowNull: true);
         result[word] = normalized;
       }
     }
@@ -1268,8 +1300,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
     }
 
     // Keep only requested words.
-    final requested =
-        requestedWords.map(_normalizeWordForCache).toSet();
+    final requested = requestedWords.map(_normalizeWordForCache).toSet();
     result.removeWhere((word, _) => !requested.contains(word));
     return result;
   }
@@ -1400,8 +1431,10 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
             final single = (await service.provider
                     .translateTextOnly(word, from, to, ref: ref))
                 .trim();
-            if (single.isNotEmpty && single.toLowerCase() != word.toLowerCase()) {
-              final cacheEntry = _WordCacheEntry(translation: single, level: null);
+            if (single.isNotEmpty &&
+                single.toLowerCase() != word.toLowerCase()) {
+              final cacheEntry =
+                  _WordCacheEntry(translation: single, level: null);
               wordCache[word] = cacheEntry;
               wordCacheUpdates[word] = cacheEntry;
               wordsNeedingLevelRefine.add(word);
@@ -1413,7 +1446,8 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
             }
           } catch (singleErr) {
             _aiDebugLog('⚠️ [NON-AI WORD SINGLE ERROR] "$word": $singleErr');
-            final cacheEntry = const _WordCacheEntry(translation: '', level: null);
+            final cacheEntry =
+                const _WordCacheEntry(translation: '', level: null);
             wordCache[word] = cacheEntry;
             wordCacheUpdates[word] = cacheEntry;
           } finally {
@@ -1581,6 +1615,7 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
           }
           _lastSelectionContextText = null;
           removeOverlay();
+          restoreReaderFocus();
         });
     controller.addJavaScriptHandler(
         handlerName: 'onAnnotationClick',
@@ -1733,8 +1768,8 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
           final from = _resolveBookSourceLanguage();
           final to = Prefs().fullTextTranslateTo;
 
-          final result =
-              await service.provider.translateTextOnly(text, from, to);
+          final result = await service.provider
+              .translateTextOnly(text, from, to, isFullText: true, ref: ref);
           if (!mounted) return 'Translation cancelled';
           _aiDebugLog('✅ [TRANSLATE RESPONSE] "$text" → "$result"');
           return result;
@@ -2260,63 +2295,64 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
       return const SizedBox();
     }
 
-    TextStyle textStyle = TextStyle(
-      color: Color(int.parse('0x$textColor')).withAlpha(150),
-      fontSize: 10,
-    );
+    final readingInfoColor = Color(int.parse('0x$textColor')).withAlpha(150);
+    final iconColor = Color(int.parse('0x$textColor'));
 
-    Widget chapterTitleWidget = Text(
-      (chapterCurrentPage == 1 ? widget.book.title : chapterTitle),
-      style: textStyle,
-    );
+    Widget getWidget(ReadingInfoEnum readingInfoEnum, TextStyle textStyle) {
+      final batteryTextStyle = TextStyle(
+        color: iconColor,
+        fontSize: (textStyle.fontSize ?? 10) - 1,
+      );
+      final batteryIconSize = (textStyle.fontSize ?? 10) * 2.7;
 
-    Widget chapterProgressWidget = Text(
-      '$chapterCurrentPage/$chapterTotalPages',
-      style: textStyle,
-    );
+      final chapterTitleWidget = Text(
+        (chapterCurrentPage == 1 ? widget.book.title : chapterTitle),
+        style: textStyle,
+      );
 
-    Widget bookProgressWidget =
-        Text('${(percentage * 100).toStringAsFixed(2)}%', style: textStyle);
+      final chapterProgressWidget = Text(
+        '$chapterCurrentPage/$chapterTotalPages',
+        style: textStyle,
+      );
 
-    Widget timeWidget = MinuteClock(textStyle: textStyle);
+      final bookProgressWidget =
+          Text('${(percentage * 100).toStringAsFixed(2)}%', style: textStyle);
 
-    Widget batteryWidget = FutureBuilder(
-        future: Battery().batteryLevel,
-        builder: (context, snapshot) {
-          if (snapshot.hasData) {
-            return Stack(
-              alignment: Alignment.center,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(0, 0.8, 2, 0),
-                  child: Text('${snapshot.data}',
-                      style: TextStyle(
-                        color: Color(int.parse('0x$textColor')),
-                        fontSize: 9,
-                      )),
-                ),
-                Icon(
-                  HeroIcons.battery_0,
-                  size: 27,
-                  color: Color(int.parse('0x$textColor')),
-                ),
-              ],
-            );
-          } else {
-            return const SizedBox();
-          }
-        });
+      final timeWidget = MinuteClock(textStyle: textStyle);
 
-    Widget batteryAndTimeWidget() => Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            batteryWidget,
-            const SizedBox(width: 5),
-            timeWidget,
-          ],
-        );
+      final batteryWidget = FutureBuilder(
+          future: Battery().batteryLevel,
+          builder: (context, snapshot) {
+            if (snapshot.hasData) {
+              return Stack(
+                alignment: Alignment.center,
+                children: [
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(
+                        0, (textStyle.fontSize ?? 10) * 0.08, 2, 0),
+                    child: Text('${snapshot.data}', style: batteryTextStyle),
+                  ),
+                  Icon(
+                    HeroIcons.battery_0,
+                    size: batteryIconSize,
+                    color: iconColor,
+                  ),
+                ],
+              );
+            } else {
+              return const SizedBox();
+            }
+          });
 
-    Widget getWidget(ReadingInfoEnum readingInfoEnum) {
+      Widget batteryAndTimeWidget() => Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              batteryWidget,
+              const SizedBox(width: 5),
+              timeWidget,
+            ],
+          );
+
       switch (readingInfoEnum) {
         case ReadingInfoEnum.chapterTitle:
           return chapterTitleWidget;
@@ -2335,40 +2371,56 @@ class EpubPlayerState extends ConsumerState<EpubPlayer>
       }
     }
 
+    final readingInfo = Prefs().readingInfo;
+
+    final headerTextStyle = TextStyle(
+      color: readingInfoColor,
+      fontSize: readingInfo.header.fontSize,
+    );
+    final footerTextStyle = TextStyle(
+      color: readingInfoColor,
+      fontSize: readingInfo.footer.fontSize,
+    );
+
     List<Widget> headerWidgets = [
-      getWidget(Prefs().readingInfo.headerLeft),
-      getWidget(Prefs().readingInfo.headerCenter),
-      getWidget(Prefs().readingInfo.headerRight),
+      getWidget(readingInfo.header.left, headerTextStyle),
+      getWidget(readingInfo.header.center, headerTextStyle),
+      getWidget(readingInfo.header.right, headerTextStyle),
     ];
 
     List<Widget> footerWidgets = [
-      getWidget(Prefs().readingInfo.footerLeft),
-      getWidget(Prefs().readingInfo.footerCenter),
-      getWidget(Prefs().readingInfo.footerRight),
+      getWidget(readingInfo.footer.left, footerTextStyle),
+      getWidget(readingInfo.footer.center, footerTextStyle),
+      getWidget(readingInfo.footer.right, footerTextStyle),
     ];
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: EdgeInsets.only(top: Prefs().pageHeaderMargin),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: headerWidgets,
-            ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: EdgeInsets.only(
+            top: readingInfo.header.verticalMargin,
+            left: readingInfo.header.leftMargin,
+            right: readingInfo.header.rightMargin,
           ),
-          const Spacer(),
-          Padding(
-            padding: EdgeInsets.only(bottom: Prefs().pageFooterMargin),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: footerWidgets,
-            ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: headerWidgets,
           ),
-        ],
-      ),
+        ),
+        const Spacer(),
+        Padding(
+          padding: EdgeInsets.only(
+            bottom: readingInfo.footer.verticalMargin,
+            left: readingInfo.footer.leftMargin,
+            right: readingInfo.footer.rightMargin,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: footerWidgets,
+          ),
+        ),
+      ],
     );
   }
 

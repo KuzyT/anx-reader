@@ -116,7 +116,7 @@ class AiProviders extends _$AiProviders {
       if (readingPage != null && readingPage.mounted) {
         epubPlayerKey.currentState?.webViewController.evaluateJavascript(
             source:
-                "if (window.reader && window.reader.cancelAndClear) { window.reader.cancelAndClear(); }");
+                "if (window.reader && window.reader.view && window.reader.view.cancelAndClear) { window.reader.view.cancelAndClear(); }");
       }
     } catch (_) {}
     ref.notifyListeners();

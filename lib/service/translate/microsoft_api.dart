@@ -25,6 +25,7 @@ class MicrosoftApiTranslateProvider extends TranslateServiceProvider {
     LangListEnum from,
     LangListEnum to, {
     String? contextText,
+    bool isFullText = false,
     WidgetRef? ref,
   }) {
     return convertStreamToWidget(
@@ -38,6 +39,7 @@ class MicrosoftApiTranslateProvider extends TranslateServiceProvider {
     LangListEnum from,
     LangListEnum to, {
     String? contextText,
+    bool isFullText = false,
     WidgetRef? ref,
   }) async* {
     try {

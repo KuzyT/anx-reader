@@ -615,6 +615,10 @@ export class View extends HTMLElement {
     this.#translator.setAiBatchSize(size)
   }
 
+  setAiWorkers(n) {
+    this.#translator.setAiWorkers(n)
+  }
+
   getTranslationLevel() {
     return this.#translator.getTranslationLevel()
   }

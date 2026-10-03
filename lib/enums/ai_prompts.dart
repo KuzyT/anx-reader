@@ -4,6 +4,7 @@ enum AiPrompts {
   summaryTheBook,
   summaryThePreviousContent,
   translate,
+  fullTextTranslate,
   translateBatch,
   translateBatchWordLevel,
   mindmap,
@@ -49,6 +50,20 @@ Avoid verbatim repetition; preserve core information
 
 [Previous Content]
 {{previous_content}}
+        ''';
+
+      case AiPrompts.fullTextTranslate:
+        return '''
+You are a professional translator. Translate the following text into {{to_locale}}.
+
+Source language: {{from_locale}}
+Source text: {{text}}
+
+Requirements:
+- Output ONLY the translated text, nothing else.
+- Do not include any explanations, notes, commentary, or the original text.
+- Preserve paragraph structure and formatting.
+- Maintain the tone and style of the original text.
         ''';
 
       case AiPrompts.translate:

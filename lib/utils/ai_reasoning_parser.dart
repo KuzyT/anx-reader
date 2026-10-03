@@ -1,6 +1,17 @@
 import 'dart:convert';
 
 import 'package:anx_reader/service/ai/tools/ai_tool_registry.dart';
+import 'package:langchain_core/chat_models.dart';
+
+class ReasoningEnvelope {
+  const ReasoningEnvelope({
+    required this.reasoningContent,
+    required this.answerContent,
+  });
+
+  final String reasoningContent;
+  final String answerContent;
+}
 
 class ParsedReasoning {
   const ParsedReasoning({
@@ -8,6 +19,14 @@ class ParsedReasoning {
   });
 
   final List<ParsedReasoningEntry> timeline;
+
+  List<ParsedReasoningEntry> get reasoningTimeline => timeline
+      .where((entry) => entry.section == ParsedReasoningSection.reasoning)
+      .toList(growable: false);
+
+  List<ParsedReasoningEntry> get answerTimeline => timeline
+      .where((entry) => entry.section == ParsedReasoningSection.answer)
+      .toList(growable: false);
 
   bool get hasReplies =>
       timeline.any((entry) => entry.type == ParsedReasoningEntryType.reply);
@@ -23,18 +42,21 @@ class ParsedReasoning {
 
 enum ParsedReasoningEntryType { reply, tool }
 
+enum ParsedReasoningSection { reasoning, answer }
+
 class ParsedReasoningEntry {
-  const ParsedReasoningEntry.reply(this.text)
+  const ParsedReasoningEntry.reply(this.text, {required this.section})
       : toolStep = null,
         type = ParsedReasoningEntryType.reply;
 
-  const ParsedReasoningEntry.tool(this.toolStep)
+  const ParsedReasoningEntry.tool(this.toolStep, {required this.section})
       : text = null,
         type = ParsedReasoningEntryType.tool;
 
   final String? text;
   final ParsedToolStep? toolStep;
   final ParsedReasoningEntryType type;
+  final ParsedReasoningSection section;
 }
 
 class ParsedToolStep {
@@ -63,17 +85,80 @@ ParsedReasoning parseReasoningContent(String content) {
     for (final match in matches) {
       final inner = match.group(1);
       if (inner != null && inner.isNotEmpty) {
-        _parseTimeline(inner, timeline);
+        _parseTimeline(
+          inner,
+          timeline,
+          section: ParsedReasoningSection.reasoning,
+        );
       }
     }
     remaining = content.replaceAll(thinkRegex, '');
   }
 
   if (remaining.isNotEmpty) {
-    _parseTimeline(remaining, timeline);
+    _parseTimeline(
+      remaining,
+      timeline,
+      section: ParsedReasoningSection.answer,
+    );
   }
 
   return ParsedReasoning(timeline: timeline);
+}
+
+ReasoningEnvelope splitReasoningEnvelope(String content) {
+  final thinkRegex = RegExp(r'<think>([\s\S]*?)<\/think>');
+  final matches = thinkRegex.allMatches(content).toList(growable: false);
+  if (matches.isEmpty) {
+    return ReasoningEnvelope(reasoningContent: '', answerContent: content);
+  }
+
+  final reasoning = matches
+      .map((match) => match.group(1) ?? '')
+      .where((part) => part.isNotEmpty)
+      .join('\n');
+  var answer = content.replaceAll(thinkRegex, '');
+  answer = answer.replaceFirst(RegExp(r'^\r?\n'), '');
+
+  return ReasoningEnvelope(
+    reasoningContent: reasoning,
+    answerContent: answer,
+  );
+}
+
+String composeReasoningEnvelope({
+  required String answerContent,
+  required String reasoningContent,
+}) {
+  if (reasoningContent.isEmpty) {
+    return answerContent;
+  }
+  if (answerContent.isEmpty) {
+    return '<think>$reasoningContent</think>';
+  }
+  return '<think>$reasoningContent</think>\n$answerContent';
+}
+
+String chatMessageDisplayContent(ChatMessage message) {
+  if (message is AIChatMessage && message.reasoningContent.isNotEmpty) {
+    return composeReasoningEnvelope(
+      answerContent: message.content,
+      reasoningContent: message.reasoningContent,
+    );
+  }
+  return message.contentAsString;
+}
+
+AIChatMessage assistantMessageFromDisplayContent(
+  String content, {
+  List<AIChatMessageToolCall> toolCalls = const [],
+}) {
+  final envelope = splitReasoningEnvelope(content);
+  return AIChatMessage(
+    content: envelope.answerContent,
+    reasoningContent: envelope.reasoningContent,
+    toolCalls: toolCalls,
+  );
 }
 
 Map<String, String> _parseAttributes(String raw) {
@@ -102,7 +187,11 @@ String _unescapeAttr(String value) {
   return Uri.decodeComponent(value);
 }
 
-void _parseTimeline(String source, List<ParsedReasoningEntry> timeline) {
+void _parseTimeline(
+  String source,
+  List<ParsedReasoningEntry> timeline, {
+  required ParsedReasoningSection section,
+}) {
   if (source.isEmpty) {
     return;
   }
@@ -117,7 +206,7 @@ void _parseTimeline(String source, List<ParsedReasoningEntry> timeline) {
     if (chunk.isEmpty) {
       return;
     }
-    timeline.add(ParsedReasoningEntry.reply(chunk));
+    timeline.add(ParsedReasoningEntry.reply(chunk, section: section));
   }
 
   for (final match in tagRegex.allMatches(source)) {
@@ -140,6 +229,7 @@ void _parseTimeline(String source, List<ParsedReasoningEntry> timeline) {
             output: _decodeAttrValue(attrs, 'output'),
             error: _decodeAttrValue(attrs, 'error'),
           ),
+          section: section,
         ),
       );
     } else {
@@ -147,7 +237,14 @@ void _parseTimeline(String source, List<ParsedReasoningEntry> timeline) {
       final text = decoded ?? _unescapeAttr(attrs['text'] ?? '');
       if (text.isNotEmpty) {
         flushBuffer();
-        timeline.add(ParsedReasoningEntry.reply(text));
+        timeline.add(
+          ParsedReasoningEntry.reply(
+            text,
+            section: tagName == 'think-block'
+                ? ParsedReasoningSection.reasoning
+                : section,
+          ),
+        );
       }
     }
 

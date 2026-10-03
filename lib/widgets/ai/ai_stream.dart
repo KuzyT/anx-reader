@@ -77,15 +77,23 @@ class AiStreamState extends ConsumerState<AiStream> {
         final l10n = L10n.of(context);
         final data = snapshot.data!;
         final parsed = parseReasoningContent(data);
-        final timelineWidgets = _buildTimeline(parsed.timeline);
+        final answerWidgets = _buildTimeline(parsed.answerTimeline);
+        final reasoningWidgets = _buildTimeline(
+          parsed.reasoningTimeline,
+          fontSize: 13,
+        );
         final isCompleted = snapshot.connectionState == ConnectionState.done;
 
         return SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (timelineWidgets.isNotEmpty)
-                ...timelineWidgets
+              if (reasoningWidgets.isNotEmpty)
+                _buildThinkingPanel(reasoningWidgets),
+              if (reasoningWidgets.isNotEmpty && answerWidgets.isNotEmpty)
+                const SizedBox(height: 8),
+              if (answerWidgets.isNotEmpty)
+                ...answerWidgets
               else if (!isCompleted)
                 Skeletonizer.zone(child: Bone.multiText())
               else
@@ -118,7 +126,10 @@ class AiStreamState extends ConsumerState<AiStream> {
     );
   }
 
-  List<Widget> _buildTimeline(List<ParsedReasoningEntry> timeline) {
+  List<Widget> _buildTimeline(
+    List<ParsedReasoningEntry> timeline, {
+    double? fontSize,
+  }) {
     final widgets = <Widget>[];
     for (var i = 0; i < timeline.length; i++) {
       final entry = timeline[i];
@@ -128,7 +139,11 @@ class AiStreamState extends ConsumerState<AiStream> {
             widgets.add(
               Padding(
                 padding: const EdgeInsets.only(bottom: 8.0),
-                child: StyledMarkdown(data: entry.text!, selectable: true),
+                child: StyledMarkdown(
+                  data: entry.text!,
+                  selectable: true,
+                  fontSize: fontSize,
+                ),
               ),
             );
           }
@@ -149,6 +164,59 @@ class AiStreamState extends ConsumerState<AiStream> {
       }
     }
     return widgets;
+  }
+
+  Widget _buildThinkingPanel(List<Widget> children) {
+    final theme = Theme.of(context);
+    final accentColor = theme.colorScheme.secondary.withValues(alpha: 0.82);
+    final subtleColor = theme.colorScheme.secondary.withValues(alpha: 0.68);
+    return Theme(
+      data: theme.copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        initiallyExpanded: false,
+        dense: true,
+        visualDensity: VisualDensity.compact,
+        tilePadding: EdgeInsets.zero,
+        childrenPadding: const EdgeInsets.fromLTRB(28, 2, 0, 8),
+        shape: const Border(),
+        collapsedShape: const Border(),
+        iconColor: subtleColor,
+        collapsedIconColor: subtleColor,
+        leading: Icon(
+          Icons.psychology_alt_outlined,
+          size: 15,
+          color: accentColor,
+        ),
+        title: Text(
+          L10n.of(context).aiThinkingHint,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: accentColor,
+            fontSize: 12,
+          ),
+        ),
+        children: [
+          Container(
+            margin: const EdgeInsets.only(left: 7),
+            padding: const EdgeInsets.only(left: 12),
+            decoration: BoxDecoration(
+              border: Border(
+                left: BorderSide(
+                  color: subtleColor.withValues(alpha: 0.55),
+                  width: 2,
+                ),
+              ),
+            ),
+            child: Opacity(
+              opacity: 0.9,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: children,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildToolTile(ParsedToolStep step) {

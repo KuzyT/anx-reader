@@ -29,6 +29,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_rating_bar/flutter_rating_bar.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as path;
 
 class BookDetail extends ConsumerStatefulWidget {
   const BookDetail({super.key, required this.book});
@@ -46,6 +47,14 @@ class _BookDetailState extends ConsumerState<BookDetail> {
   bool _isCollapsed = false;
   final TextEditingController _newTagController = TextEditingController();
   Color? _pendingTagColor;
+
+  String get _bookFileFormat {
+    final extension = path.extension(_book.filePath).replaceFirst('.', '');
+    if (extension.isEmpty) {
+      return '-';
+    }
+    return extension.toUpperCase();
+  }
 
   @override
   void initState() {
@@ -310,6 +319,43 @@ class _BookDetailState extends ConsumerState<BookDetail> {
       );
     }
 
+
+    Future<void> renameBookFileToMatchTitle() async {
+      final book = widget.book;
+      final oldRelative = book.filePath;
+      final extension = path.extension(oldRelative);
+      if (extension.isEmpty) return;
+
+      var base = book.title
+          .replaceAll(RegExp(r'[<>:"/\\|?*#@$%^&+=\[\]{}`~]'), '_')
+          .replaceAll(RegExp(r'[\n\r]+'), ' ')
+          .trim();
+      base = base.replaceAll(RegExp(r'\s+'), ' ');
+      if (base.isEmpty) base = 'book';
+      if (base.length > 80) base = base.substring(0, 80).trim();
+
+      var newRelative = 'file/$base$extension';
+      if (newRelative == oldRelative) return;
+
+      final oldFull = getBasePath(oldRelative);
+      var newFull = getBasePath(newRelative);
+      final oldFile = File(oldFull);
+      if (!await oldFile.exists()) return;
+
+      if (await File(newFull).exists()) {
+        newRelative =
+            'file/$base-${DateTime.now().millisecondsSinceEpoch}$extension';
+        newFull = getBasePath(newRelative);
+      }
+
+      try {
+        await oldFile.rename(newFull);
+        book.filePath = newRelative;
+      } catch (e) {
+        AnxLog.warning('Rename book file failed: $e');
+      }
+    }
+
     Widget buildEditButton() {
       return Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -331,14 +377,17 @@ class _BookDetailState extends ConsumerState<BookDetail> {
                       Text(L10n.of(context).bookDetailSave),
                     ],
                   ),
-                  onPressed: () {
+                  onPressed: () async {
                     setState(() {
                       isEditing = false;
-                      bookDao.updateBook(widget.book);
-                      Sync().syncData(SyncDirection.upload, ref,
-                          trigger: SyncTrigger.manual);
-                      ref.read(bookListProvider.notifier).refresh();
                     });
+                    // Keep local/WebDAV filename in sync with the displayed title (#989)
+                    await renameBookFileToMatchTitle();
+                    await bookDao.updateBook(widget.book);
+                    Sync().syncData(SyncDirection.upload, ref,
+                        trigger: SyncTrigger.manual);
+                    ref.read(bookListProvider.notifier).refresh();
+                    if (mounted) setState(() {});
                   },
                 )
               : OutlinedButton(
@@ -749,6 +798,10 @@ class _BookDetailState extends ConsumerState<BookDetail> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  Text(
+                    '${L10n.of(context).bookDetailFileFormat}$_bookFileFormat',
+                    style: textStyle,
+                  ),
                   Text(
                     '${L10n.of(context).bookDetailImportDate}${widget.book.createTime.toString().substring(0, 10)}',
                     style: textStyle,

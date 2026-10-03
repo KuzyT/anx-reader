@@ -6,13 +6,22 @@ import 'package:langchain_core/tools.dart';
 
 typedef JsonMap = Map<String, dynamic>;
 
+/// Recursively converts a map (which may be a const _ConstMap) into a proper
+/// Map so that langchain_google mappers can safely cast nested property values.
+Map<String, dynamic> _deepConvertMap(Map<dynamic, dynamic> input) {
+  return input.map((key, value) {
+    final convertedValue = value is Map ? _deepConvertMap(value) : value;
+    return MapEntry(key.toString(), convertedValue);
+  });
+}
+
 abstract class RepositoryTool<I extends Object, O> {
   RepositoryTool({
     required this.name,
     required this.description,
-    required this.inputJsonSchema,
+    required Map<String, dynamic> inputJsonSchema,
     this.timeout,
-  });
+  }) : inputJsonSchema = _deepConvertMap(inputJsonSchema);
 
   final String name;
   final String description;

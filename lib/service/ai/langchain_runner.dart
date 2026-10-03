@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:anx_reader/utils/ai_reasoning_parser.dart';
 import 'package:anx_reader/utils/log/common.dart';
 import 'package:langchain/langchain.dart';
 
@@ -27,40 +28,51 @@ class CancelableLangchainRunner {
     String answerBuffer = '';
     bool reasoningDetected = false;
     bool answerPhaseStarted = false;
+    StreamSubscription<ChatResult>? subscription;
 
     late StreamController<String> controller;
     controller = StreamController<String>(
       onListen: () {
         _controller = controller;
         final source = model.stream(prompt);
-        _subscription = source.listen(
+        subscription = source.listen(
           (event) {
             final rawChunk = event.output.content;
-            if (rawChunk.isEmpty) {
+            final reasoningChunk = event.output.reasoningContent;
+            if (rawChunk.isEmpty && reasoningChunk.isEmpty) {
               return;
             }
 
-            if (_isThinkChunk(rawChunk)) {
+            if (reasoningChunk.isNotEmpty) {
               reasoningDetected = true;
-              final cleaned = _cleanThinkChunk(rawChunk);
-              if (cleaned.isNotEmpty) {
-                thinkBuffer += cleaned;
-              }
-            } else {
+              thinkBuffer += reasoningChunk;
+            }
+
+            var contentChunk = rawChunk;
+            if (contentChunk.isNotEmpty && _isThinkChunk(contentChunk)) {
+              reasoningDetected = true;
+              thinkBuffer += _cleanThinkChunk(contentChunk);
+              contentChunk = '';
+            }
+
+            if (contentChunk.isNotEmpty) {
               if (reasoningDetected && !answerPhaseStarted) {
-                if (rawChunk.trim().isEmpty) {
-                  thinkBuffer += rawChunk;
+                if (contentChunk.trim().isEmpty) {
+                  thinkBuffer += contentChunk;
                 } else {
                   answerPhaseStarted = true;
-                  answerBuffer += rawChunk;
+                  answerBuffer += contentChunk;
                 }
               } else {
-                answerBuffer += rawChunk;
+                answerBuffer += contentChunk;
               }
             }
 
             final aggregated = reasoningDetected
-                ? '<think>${thinkBuffer.trim()}</think>\n$answerBuffer'
+                ? composeReasoningEnvelope(
+                    answerContent: answerBuffer,
+                    reasoningContent: thinkBuffer.trim(),
+                  )
                 : answerBuffer;
 
             if (!controller.isClosed) {
@@ -77,15 +89,16 @@ class CancelableLangchainRunner {
             if (!controller.isClosed) {
               await controller.close();
             }
-            _subscription = null;
+            if (identical(_subscription, subscription)) _subscription = null;
             if (_controller == controller) _controller = null;
           },
           cancelOnError: false,
         );
+        _subscription = subscription;
       },
       onCancel: () async {
-        await _subscription?.cancel();
-        _subscription = null;
+        await subscription?.cancel();
+        if (identical(_subscription, subscription)) _subscription = null;
         await _closeModel(model);
         if (!controller.isClosed) {
           await controller.close();
@@ -129,10 +142,19 @@ class CancelableLangchainRunner {
         );
       }
 
+      void appendThinkingChunk(String text) {
+        if (timeline.isNotEmpty &&
+            timeline.last.type == _ReasoningItemType.think) {
+          timeline.last.appendText(text);
+        } else {
+          timeline.add(_ReasoningItem.think(text));
+        }
+      }
+
       void appendReplyChunk(String text) {
         if (timeline.isNotEmpty &&
             timeline.last.type == _ReasoningItemType.reply) {
-          timeline.last.appendReply(text);
+          timeline.last.appendText(text);
         } else {
           timeline.add(_ReasoningItem.reply(text));
         }
@@ -192,11 +214,19 @@ class CancelableLangchainRunner {
                   ? normalizedChunk
                   : aggregated!.concat(normalizedChunk);
               final output = aggregated!.output;
+              final reasoningChunk = normalizedChunk.output.reasoningContent;
+
+              if (reasoningChunk.isNotEmpty) {
+                appendThinkingChunk(reasoningChunk);
+                emit();
+              }
 
               if (output.toolCalls.isEmpty) {
-                final textChunk = normalizedChunk.outputAsString;
-                appendReplyChunk(textChunk);
-                emit();
+                final textChunk = normalizedChunk.output.content;
+                if (textChunk.isNotEmpty) {
+                  appendReplyChunk(textChunk);
+                  emit();
+                }
               }
             },
             onError: (Object error, StackTrace stack) {
@@ -323,8 +353,12 @@ class CancelableLangchainRunner {
 
   ChatResult _normalizeThinkChunk(ChatResult chunk) {
     final content = _normalizeThinkText(chunk.output.content);
-    final output =
-        AIChatMessage(content: content, toolCalls: chunk.output.toolCalls);
+    final reasoningContent = _normalizeThinkText(chunk.output.reasoningContent);
+    final output = AIChatMessage(
+      content: content,
+      reasoningContent: reasoningContent,
+      toolCalls: chunk.output.toolCalls,
+    );
 
     return ChatResult(
       output: output,
@@ -405,6 +439,7 @@ class CancelableLangchainRunner {
 
     return AIChatMessage(
       content: message.content,
+      reasoningContent: message.reasoningContent,
       toolCalls: enrichedToolCalls,
     );
   }
@@ -469,9 +504,14 @@ String _escapeAttr(String value) {
   return Uri.encodeComponent(value);
 }
 
-enum _ReasoningItemType { reply, tool }
+enum _ReasoningItemType { think, reply, tool }
 
 class _ReasoningItem {
+  _ReasoningItem.think(String text)
+      : reply = text,
+        toolStep = null,
+        type = _ReasoningItemType.think;
+
   _ReasoningItem.reply(String text)
       : reply = text,
         toolStep = null,
@@ -485,8 +525,8 @@ class _ReasoningItem {
   final _ToolStep? toolStep;
   final _ReasoningItemType type;
 
-  void appendReply(String text) {
-    if (type != _ReasoningItemType.reply) {
+  void appendText(String text) {
+    if (type != _ReasoningItemType.reply && type != _ReasoningItemType.think) {
       return;
     }
     reply = (reply ?? '') + text;
@@ -494,6 +534,13 @@ class _ReasoningItem {
 
   String toTag() {
     switch (type) {
+      case _ReasoningItemType.think:
+        final text = reply;
+        if (text == null || text.isEmpty) {
+          return '';
+        }
+        final encoded = base64Encode(utf8.encode(text));
+        return "<think-block text_b64='${_escapeAttr(encoded)}'/>";
       case _ReasoningItemType.reply:
         final text = reply;
         if (text == null || text.isEmpty) {

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:anx_reader/service/ai_translation_status_service.dart';
 import 'package:anx_reader/config/shared_preference_provider.dart';
 import 'package:anx_reader/l10n/generated/L10n.dart';
-import 'package:anx_reader/l10n/translation_ui_fallback.dart';
 
 void showAiTranslationLogsModal(BuildContext context) {
   showModalBottomSheet(

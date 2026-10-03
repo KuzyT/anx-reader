@@ -20,7 +20,17 @@ Base: ffa504aa, branch codex/translation-reliability in the existing isolated ch
 2. [x] Repair providers/bridge and background levels without retry storms or stale writes.
 3. [x] Repair JS scheduling/rendering and verify cold/warm cache, page/scroll, cancellation and original DOM.
 4. [x] Complete phrase/TTS/explanation/share actions using installed components.
-5. [ ] Full checks, final review/corrections, builds, commit/push and draft PR.
+5. [x] Full checks, final review/corrections, builds, commit/push and draft PR.
+
+## Delivery
+
+- Code commit: `ab5cf89df336d7488a76f65b41dc6ff33e66093a`.
+- [Draft PR #5](https://github.com/KuzyT/anx-reader/pull/5), stacked against `codex/word-learning` (PR #4); no merge.
+- Final checks: 20 Flutter tests, 1 Node test, 36 browser checks passed. Analyzer: no errors, 76 existing warnings/info. Webpack and Windows/Android debug builds succeeded. Independent review: no remaining Critical/Important blockers.
+- Builds: `D:/PROJECTS/anx-reader/build/translation-reliability-ab5cf89d/`.
+- Android `anx-reader-android-debug.apk` SHA256: `03F2762FF7C9FB7A5A7D4E77DA4865F0BFBFFE5E7BB42074FBF1F13A1D3BB5A6`.
+- Windows `anx-reader-windows-debug.zip` SHA256: `0DF17B00FBAB42E17DB87B8073307E75C5A20739CC84F9A43A3B3ACA489D88FF`.
+- Instructions/manual limits: `docs/translation-reliability.md`. These builds include upstream refresh and vocabulary work; original checkout and personal library preserved.
 
 ## Boundaries and evidence
 

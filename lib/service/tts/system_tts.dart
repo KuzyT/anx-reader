@@ -25,6 +25,8 @@ class SystemTts extends BaseTts {
   static String? _prevVoiceText;
 
   bool restarting = false;
+  bool _singleUtterance = false;
+  int _speechGeneration = 0;
 
   late Function getHereFunction;
   late Function getNextTextFunction;
@@ -92,12 +94,16 @@ class SystemTts extends BaseTts {
     }
 
     flutterTts.setStartHandler(() async {
+      if (_singleUtterance) return;
       updateTtsState(TtsStateEnum.playing);
       if (!isAndroid) {
         return;
       }
+      final generation = _speechGeneration;
+      final next = await epubPlayerKey.currentState!.ttsPrepare();
+      if (_singleUtterance || generation != _speechGeneration) return;
       _prevVoiceText = _currentVoiceText;
-      _currentVoiceText = await epubPlayerKey.currentState!.ttsPrepare();
+      _currentVoiceText = next;
 
       if (_currentVoiceText?.isNotEmpty ?? false) {
         flutterTts.speak(_currentVoiceText!);
@@ -105,12 +111,16 @@ class SystemTts extends BaseTts {
     });
 
     flutterTts.setCompletionHandler(() async {
+      if (_singleUtterance) return;
       if (!isAndroid) {
         return;
       }
       updateTtsState(TtsStateEnum.playing);
       if (_currentVoiceText?.isEmpty ?? true) {
-        _currentVoiceText = await getNextText();
+        final generation = _speechGeneration;
+        final next = await getNextText();
+        if (_singleUtterance || generation != _speechGeneration) return;
+        _currentVoiceText = next;
         await speak();
       } else {
         await getNextText();
@@ -166,16 +176,22 @@ class SystemTts extends BaseTts {
 
   /// For testing a specific voice in settings (matching OnlineTts API)
   Future<void> speakWithVoice(String content, String voiceShortName) async {
+    _speechGeneration++;
+    _singleUtterance = true;
     await stop();
+    final generation = _speechGeneration;
     await flutterTts.setVolume(volume);
     await flutterTts.setSpeechRate(rate);
     await flutterTts.setPitch(pitch);
     await _applyVoice(voiceShortName);
+    if (generation != _speechGeneration || !_singleUtterance) return;
     await flutterTts.speak(content);
   }
 
   @override
   Future<void> speak({String? content}) async {
+    final generation = ++_speechGeneration;
+    _singleUtterance = false;
     await setAwaitOptions();
     if (content != null) {
       _currentVoiceText = content;
@@ -200,16 +216,21 @@ class SystemTts extends BaseTts {
     final selectedVoice = SystemTtsProvider().resolveVoice(null);
     await _applyVoice(selectedVoice);
 
+    if (_singleUtterance || generation != _speechGeneration) return;
     await flutterTts.speak(_currentVoiceText!);
 
+    if (_singleUtterance || generation != _speechGeneration) return;
     if (!isAndroid && ttsStateNotifier.value == TtsStateEnum.playing) {
-      _currentVoiceText = await getNextTextFunction();
+      final next = await getNextTextFunction();
+      if (_singleUtterance || generation != _speechGeneration) return;
+      _currentVoiceText = next;
       speak();
     }
   }
 
   @override
   Future<dynamic> stop() async {
+    _speechGeneration++;
     updateTtsState(TtsStateEnum.stopped);
     final result = await flutterTts.stop();
     _currentVoiceText = null;
@@ -218,6 +239,7 @@ class SystemTts extends BaseTts {
 
   @override
   Future<void> pause() async {
+    _speechGeneration++;
     final result = await flutterTts.stop();
     if (result == 1) {
       updateTtsState(TtsStateEnum.paused);

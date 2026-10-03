@@ -53,6 +53,11 @@ export class Translator {
   #aiWorkers = 1
   observedElements = new Set()
   #translatedElements = new WeakMap()
+  #checkingElements = new WeakMap()
+  #inFlightElements = new WeakMap()
+  #wordLevels = {}
+  #pendingLevelDisplay = new WeakSet()
+  #mappingSource = false
   #observer = null
   #pendingQueue = new Map() // element -> text
   #batchTimer = null
@@ -228,7 +233,8 @@ export class Translator {
   }
 
 
-  onRelocated() {
+  onRelocated(reason = 'page') {
+    if (!['page', 'snap', 'scroll'].includes(reason)) return
     if (this.#translationMode === TranslationMode.OFF) return
     
     // Invalidate any flying batches & clear current queue
@@ -250,7 +256,7 @@ export class Translator {
       this.#isScrolling = false
       // Retrigger check for observed visible elements
       this.#forceTranslateVisibleElements()
-    }, 2000)
+    }, reason === 'scroll' ? 150 : 0)
   }
 
   cancelAndClear() {
@@ -323,7 +329,7 @@ export class Translator {
 
     const maxAheadX = viewportWidth
     const maxAheadY = viewportHeight
-    const isRtl = (document?.documentElement?.dir || '').toLowerCase() === 'rtl'
+    const isRtl = (element.ownerDocument?.documentElement?.dir || '').toLowerCase() === 'rtl'
 
     // Vertical range: current viewport + one viewport ahead (down)
     const withinY =
@@ -375,6 +381,21 @@ export class Translator {
     })
   }
 
+  updateWordLevels(levels) {
+    Object.assign(this.#wordLevels, levels)
+    if (this.#translationMode !== TranslationMode.INTERLINEAR) return
+    this.observedElements.forEach(element => {
+      const data = this.#translatedElements.get(element)
+      if (!data?.translatedText) return
+      const selection = element.ownerDocument.getSelection()
+      if (selection?.rangeCount && !selection.isCollapsed && selection.getRangeAt(0).intersectsNode(element)) {
+        this.#pendingLevelDisplay.add(element)
+        return
+      }
+      this.#applyTranslation(element, data.translatedText)
+    })
+  }
+
   setVocabularyStatuses(statuses) {
     this.#vocabularyStatuses = statuses || {}
     if (this.#translationMode !== TranslationMode.INTERLINEAR) return
@@ -382,6 +403,109 @@ export class Translator {
       const data = this.#translatedElements.get(element)
       if (data?.translatedText) this.#applyTranslation(element, data.translatedText)
     })
+  }
+
+  #wrapperForNode(node) {
+    return (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement)?.closest?.('.translated-text')
+  }
+
+  #offsetWithin(root, node, offset) {
+    const prefix = root.ownerDocument.createRange()
+    prefix.selectNodeContents(root)
+    prefix.setEnd(node, offset)
+    const copy = prefix.cloneContents()
+    copy.querySelectorAll('rt').forEach(rt => rt.remove())
+    return copy.textContent.length
+  }
+
+  #pointAt(root, offset) {
+    const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT,
+      node => node.parentElement?.closest('rt') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT)
+    let node, last
+    while ((node = walker.nextNode())) {
+      last = node
+      if (offset <= node.textContent.length) return { node, offset }
+      offset -= node.textContent.length
+    }
+    return last ? { node: last, offset: last.textContent.length } : { node: root, offset: 0 }
+  }
+
+  // CFI offsets belong to the source DOM, never to disposable ruby overlays.
+  #withSourceDocument(doc, callback) {
+    if (this.#mappingSource) return callback()
+    const selection = doc.getSelection()
+    const selected = selection?.rangeCount && !selection.isCollapsed ? selection.getRangeAt(0) : null
+    const endpoints = selected && { start: selected.startContainer, startOffset: selected.startOffset,
+      end: selected.endContainer, endOffset: selected.endOffset }
+    const wrappers = []
+    this.#mappingSource = true
+    try {
+      for (const element of this.observedElements) {
+        if (element.ownerDocument !== doc) continue
+        const wrapper = element.querySelector('.translated-text')
+        if (!wrapper) continue
+        wrappers.push({ element, wrapper, hidden: element.hasAttribute('data-original-visibility') })
+        wrapper.remove()
+        this.#restoreOriginalText(element)
+      }
+      return callback()
+    } finally {
+      for (const { element, wrapper, hidden } of wrappers) {
+        if (hidden) this.#hideOriginalText(element)
+        element.insertBefore(wrapper, element.firstChild)
+      }
+      if (endpoints && endpoints.start.isConnected && endpoints.end.isConnected) {
+        const restored = doc.createRange()
+        restored.setStart(endpoints.start, endpoints.startOffset)
+        restored.setEnd(endpoints.end, endpoints.endOffset)
+        selection.removeAllRanges()
+        selection.addRange(restored)
+      }
+      this.#mappingSource = false
+    }
+  }
+
+  withSourceRange(range, callback) {
+    if (this.#mappingSource || !range) return callback(range)
+    const point = (node, offset) => {
+      const wrapper = this.#wrapperForNode(node)
+      if (wrapper) return { root: wrapper.parentElement, offset: this.#offsetWithin(wrapper, node, offset) }
+      const overlayIndex = [...node.childNodes].findIndex(child => child.classList?.contains('translated-text'))
+      return { node, offset: offset - (overlayIndex >= 0 && overlayIndex < offset ? 1 : 0) }
+    }
+    const start = point(range.startContainer, range.startOffset), end = point(range.endContainer, range.endOffset)
+    return this.#withSourceDocument(range.startContainer.ownerDocument, () => {
+      const first = start.root ? this.#pointAt(start.root, start.offset) : start
+      const last = end.root ? this.#pointAt(end.root, end.offset) : end
+      const source = first.node.ownerDocument.createRange()
+      source.setStart(first.node, first.offset)
+      source.setEnd(last.node, last.offset)
+      return callback(source)
+    })
+  }
+
+  resolveSourceRange(doc, createRange) {
+    if (this.#mappingSource) return createRange()
+    const endpoint = (node, offset) => {
+      for (const element of this.observedElements) {
+        if (element.ownerDocument !== doc || !element.contains(node)) continue
+        const data = this.#translatedElements.get(element)
+        if (data?.translatedText && this.#translationMode === TranslationMode.INTERLINEAR) return { element, offset: this.#offsetWithin(element, node, offset) }
+      }
+      return { node, offset }
+    }
+    const points = this.#withSourceDocument(doc, () => {
+      const range = createRange()
+      return { start: endpoint(range.startContainer, range.startOffset), end: endpoint(range.endContainer, range.endOffset) }
+    })
+    const visible = point => {
+      const wrapper = point.element?.querySelector('.translated-text')
+      return wrapper ? this.#pointAt(wrapper, point.offset) : point
+    }
+    const first = visible(points.start), last = visible(points.end), range = doc.createRange()
+    range.setStart(first.node, first.offset)
+    range.setEnd(last.node, last.offset)
+    return range
   }
 
   #wordKey(word) {
@@ -392,6 +516,15 @@ export class Translator {
   #listenForVocabulary(doc) {
     if (this.#observedDocuments.has(doc)) return
     this.#observedDocuments.add(doc)
+    doc.addEventListener('selectionchange', () => {
+      if (!doc.getSelection()?.isCollapsed) return
+      for (const element of this.observedElements) {
+        if (element.ownerDocument !== doc || !this.#pendingLevelDisplay.has(element)) continue
+        this.#pendingLevelDisplay.delete(element)
+        const data = this.#translatedElements.get(element)
+        if (data?.translatedText && this.#translationMode === TranslationMode.INTERLINEAR) this.#applyTranslation(element, data.translatedText)
+      }
+    })
     let pointer = null
     doc.addEventListener('pointerdown', event => {
       pointer = { x: event.clientX, y: event.clientY, time: Date.now() }
@@ -446,6 +579,8 @@ export class Translator {
   }
 
   clearTranslations() {
+    this.#generationId++
+    this.#wordLevels = {}
     // Cancel any pending batch
     if (this.#batchTimer) {
       clearTimeout(this.#batchTimer)
@@ -472,6 +607,7 @@ export class Translator {
   }
 
   retranslateAll() {
+    this.#wordLevels = {}
     this.#generationId++
     if (this.#batchTimer) {
       clearTimeout(this.#batchTimer)
@@ -605,9 +741,22 @@ export class Translator {
     return elements
   }
 
-  async #translateElement(element) {
+  #translateElement(element) {
+    const generation = this.#generationId
+    const existing = this.#checkingElements.get(element)
+    if (existing?.generation === generation) return existing.promise
+    const promise = this.#checkAndQueueElement(element).finally(() => {
+      if (this.#checkingElements.get(element)?.promise === promise) this.#checkingElements.delete(element)
+    })
+    this.#checkingElements.set(element, { generation, promise })
+    return promise
+  }
+
+  async #checkAndQueueElement(element) {
+    const generation = this.#generationId
+    if (this.#inFlightElements.get(element) === generation) return
     if (this.#translationMode === TranslationMode.OFF) return
-    if (this.#translatedElements.has(element)) return
+    if (this.#translatedElements.has(element) && this.#translatedElements.get(element).complete !== false) return
     if (this.#blockedUntilRelocation.has(element)) return
 
     if (!this.#isWithinTranslateWindow(element)) return
@@ -617,12 +766,14 @@ export class Translator {
     // so innerText would return a mix of original + ruby translations.
     const text = this.#getElementOriginalText(element)
     if (!text) return
+    if (this.#isWordLevelExpected() && !/[\p{L}\p{N}]/u.test(text)) { this.#markNoTranslation(element, text); return }
     // Stash for later retrievals even on the first translation pass
     this.#rememberOriginalText(element, text)
     
     // Check local cache instantly first before adding to AI processing queue
     try {
       const cacheResultJson = await window.flutter_inappwebview.callHandler('checkTranslationCache', JSON.stringify([text]), this.#translationLevel)
+      if (this.#generationId !== generation || this.#translationMode === TranslationMode.OFF) return
       const cacheResult = JSON.parse(cacheResultJson || '{}')
 
       if (cacheResult && Object.prototype.hasOwnProperty.call(cacheResult, text)) {
@@ -631,10 +782,7 @@ export class Translator {
         const trimmedCached = cachedTranslation.trim()
 
         // Empty cached value means "translation not needed" (intentional no-translation hit).
-        if (!trimmedCached) {
-          this.#markNoTranslation(element, text)
-          return
-        }
+        if (!trimmedCached) throw new Error('Empty translation cache response')
 
         const isInvalidWordLevelCache =
           this.#isWordLevelExpected() &&
@@ -657,19 +805,21 @@ export class Translator {
       console.warn('Cache check failed:', e)
     }
 
+    if (this.#generationId !== generation || this.#translationMode === TranslationMode.OFF) return
     // Cache Miss: Add to batch queue for AI translation that waits for scroll stop
     this.#pendingQueue.set(element, text)
     this.#scheduleBatchFlush()
   }
 
   #scheduleRetry(element, text, { isRateLimit = false } = {}) {
-    if (this.#translatedElements.has(element)) return
+    if (this.#translatedElements.has(element) && this.#translatedElements.get(element).complete !== false) return
     if (this.#blockedUntilRelocation.has(element)) return
 
     const currentAttempts = this.#retryAttempts.get(element) || 0
     const generationAtSchedule = this.#generationId
 
-    if (!isRateLimit && currentAttempts >= this.#maxImmediateRetryAttempts) {
+    const rateAttempts = this.#rateLimitRetryAttempts.get(element) || 0
+    if (currentAttempts + rateAttempts >= this.#maxImmediateRetryAttempts) {
       // Stop retrying this element until user relocates (page turn/scroll settle).
       this.#blockedUntilRelocation.add(element)
       this.#emitRetryInfo({
@@ -709,7 +859,7 @@ export class Translator {
     setTimeout(() => {
       if (this.#generationId !== generationAtSchedule) return
       if (this.#translationMode === TranslationMode.OFF) return
-      if (this.#translatedElements.has(element)) return
+      if (this.#translatedElements.has(element) && this.#translatedElements.get(element).complete !== false) return
       if (this.#blockedUntilRelocation.has(element)) return
       this.#pendingQueue.set(element, text)
       this.#scheduleBatchFlush()
@@ -746,9 +896,7 @@ export class Translator {
   #scheduleBatchFlush() {
     if (this.#isScrolling) return
     
-    if (this.#batchTimer) {
-      clearTimeout(this.#batchTimer)
-    }
+    if (this.#batchTimer) return
     this.#batchTimer = setTimeout(() => {
       this.#flushBatchQueue()
     }, this.#batchDelayMs)
@@ -759,27 +907,32 @@ export class Translator {
     if (this.#pendingQueue.size === 0) return
     
     // Snapshot and clear the queue
-    const batch = new Map(this.#pendingQueue)
+    const batch = new Map([...this.#pendingQueue].filter(([element]) => this.#inFlightElements.get(element) !== this.#generationId))
     this.#pendingQueue.clear()
     const currentGen = this.#generationId
     
-    const elements = Array.from(batch.keys())
-    const texts = Array.from(batch.values())
-
+    const entries = [...batch]
+    for (const [element] of entries) this.#inFlightElements.set(element, currentGen)
     try {
-      const maxBatchSize = this.#aiBatchSize
-      const n = Math.max(1, this.#aiWorkers)
-      // Divide texts into N groups for parallel processing
-      const groupSize = Math.ceil(texts.length / n)
-      const chunkPromises = []
-      for (let i = 0; i < texts.length; i += groupSize) {
-        const chunkTexts = texts.slice(i, i + groupSize)
-        const chunkElements = elements.slice(i, i + groupSize)
-        chunkPromises.push(this.#processChunk(chunkTexts, chunkElements, currentGen, maxBatchSize))
+      // Finish the visible page before consuming slots for one page ahead.
+      for (const visible of [true, false]) {
+        const group = entries.filter(([element]) => this.#isCurrentlyVisible(element) === visible)
+        const n = Math.max(1, this.#aiWorkers)
+        const groupSize = Math.max(1, Math.ceil(group.length / n))
+        const promises = []
+        for (let i = 0; i < group.length; i += groupSize) {
+          const chunk = group.slice(i, i + groupSize)
+          promises.push(this.#processChunk(chunk.map(([, text]) => text), chunk.map(([element]) => element), currentGen, this.#aiBatchSize))
+        }
+        await Promise.all(promises)
+        if (this.#generationId !== currentGen) return
       }
-      await Promise.all(chunkPromises)
     } catch (error) {
       console.warn('Batch translation failed:', error)
+    } finally {
+      for (const [element] of entries) {
+        if (this.#inFlightElements.get(element) === currentGen) this.#inFlightElements.delete(element)
+      }
     }
   }
 
@@ -812,10 +965,12 @@ export class Translator {
           for (let i = 0; i < chunkElements.length; i++) {
             const element = chunkElements[i]
             const originalText = chunkTexts[i]
-            const translatedText = chunkTranslations[i]
+            let translatedText = chunkTranslations[i]
+            const partial = translatedText?.startsWith('__ANX_PARTIAL__')
+            if (partial) translatedText = translatedText.slice('__ANX_PARTIAL__'.length)
             
             // Skip if race condition happened
-            if (this.#translatedElements.has(element)) {
+            if (this.#translatedElements.has(element) && this.#translatedElements.get(element).complete !== false) {
               continue
             }
 
@@ -835,16 +990,16 @@ export class Translator {
             }
 
             if (!translatedText || translatedText.trim() === '') {
+              this.#scheduleRetry(element, originalText)
+              continue
+            }
+
+            if (!partial && translatedText.trim() === originalText) {
               this.#markNoTranslation(element, originalText)
               continue
             }
 
-            if (translatedText.trim() === originalText) {
-              this.#markNoTranslation(element, originalText)
-              continue
-            }
-
-            if (this.#isWordLevelExpected() && !this.#hasWordLevelMarkers(translatedText)) {
+            if (!partial && this.#isWordLevelExpected() && !this.#hasWordLevelMarkers(translatedText)) {
               this.#scheduleRetry(element, originalText)
               continue
             }
@@ -853,10 +1008,13 @@ export class Translator {
             this.#rememberOriginalText(element, originalText)
             this.#translatedElements.set(element, {
               originalText: originalText,
-              translatedText: translatedText
+              translatedText: translatedText,
+              complete: !partial
             })
 
-            this.#applyTranslation(element, translatedText)
+            if (partial && !this.#hasWordLevelMarkers(translatedText)) this.#applyRubyTranslation(element, [])
+            else this.#applyTranslation(element, translatedText)
+            if (partial) this.#scheduleRetry(element, originalText)
           }
         } catch (error) {
           console.error('Translation chunk failed:', error)
@@ -1011,77 +1169,79 @@ export class Translator {
   }
 
   #applyRubyTranslation(element, wordPairs) {
-    this.#injectWordWiseStyles(element.ownerDocument)
-    // Create a wrapper that replaces original content with ruby-annotated words
-    const wrapper = document.createElement('span')
+    const doc = element.ownerDocument
+    this.#injectWordWiseStyles(doc)
+    this.#restoreOriginalText(element)
+    const wrapper = doc.createElement('span')
     wrapper.className = 'translated-text'
-    wrapper.setAttribute('data-translation-mark', '1')
+    wrapper.dataset.translationMark = '1'
     wrapper.style.display = 'inline'
-    
-    for (let i = 0; i < wordPairs.length; i++) {
-      const [original, rawTranslation, minLevel] = wordPairs[i]
-      if (typeof original !== 'string') continue
-      const status = this.#vocabularyStatuses[this.#wordKey(original)]
-      const translation = status === 'known' ? '' : status === 'learning' ? rawTranslation :
-        this.#filterByLevel([[original, rawTranslation, minLevel]], this.#translationLevel)[0][1]
-      const base = document.createElement('span')
-      base.textContent = original
-      if (status === 'learning') base.style.textDecoration = 'underline dotted'
-      let wordElement = base
-      
-      // Empty translations (like [um|] from parser errors) fall back to just the original word
-      if (translation && translation.trim()) {
-        // Word with translation — use ruby element (even if translation is empty, it helps layout spacing or highlighting)
-        const ruby = document.createElement('ruby')
-        ruby.className = 'anx-wordwise'
-        ruby.appendChild(base)
-        wordElement = ruby
-        
-        const rt = document.createElement('rt')
-        rt.textContent = translation
-        rt.style.fontSize = '0.75em'
-        /* Add a bit of space so it doesn't touch the brace */
-        rt.style.paddingBottom = '3px'
-        
-        if (minLevel) {
-          rt.setAttribute('data-level', minLevel)
-        }
-        
-        if (this.#translationColorEnabled && minLevel && this.#translationLevelColors[minLevel.toLowerCase()]) {
-          rt.style.color = this.#translationLevelColors[minLevel.toLowerCase()]
-          rt.style.fontWeight = 'bold'
-        } else {
-          rt.style.color = 'inherit'
-          rt.style.fontWeight = 'normal'
-        }
-        
-        rt.style.opacity = '0.85'
-        rt.style.fontStyle = 'normal'
-
-        ruby.appendChild(rt)
-        wrapper.appendChild(ruby)
-      } else {
-        // Word without translation — just the word
-        wrapper.appendChild(base)
-      }
-      if (this.#wordKey(original)) {
-        wordElement.dataset.vocabularyWord = original
-        wordElement.dataset.vocabularyTranslation = rawTranslation || ''
-        wordElement.tabIndex = 0
-        wordElement.setAttribute('role', 'button')
-        wordElement.setAttribute('aria-label', `${original}: ${rawTranslation || ''}`)
-      }
-      
-      // Add space between words (except after last)
-      if (i < wordPairs.length - 1) {
-        wrapper.appendChild(document.createTextNode(' '))
+    for (const node of element.childNodes) {
+      if (!node.classList?.contains('translated-text')) wrapper.append(node.cloneNode(true))
+    }
+    wrapper.querySelectorAll('[id]').forEach(node => node.removeAttribute('id'))
+    const source = wrapper.textContent
+    const ranges = []
+    let cursor = 0
+    for (const [original, translation, level] of wordPairs) {
+      if (typeof original !== 'string' || !original) continue
+      const start = source.indexOf(original, cursor)
+      if (start < 0) continue
+      cursor = start + original.length
+      if (this.#wordKey(original) && (translation || level)) ranges.push({ start, end: cursor, original, translation, level })
+    }
+    // Words omitted by a partial reply remain tappable without an invented hint.
+    for (const match of source.matchAll(/[\p{L}\p{M}\p{N}]+(?:['‘’\-][\p{L}\p{M}\p{N}]+)*/gu)) {
+      if (!ranges.some(range => match.index >= range.start && match.index < range.end)) {
+        ranges.push({ start: match.index, end: match.index + match[0].length, original: match[0], translation: '', level: null })
       }
     }
-    
-    // Apply display mode
+    ranges.sort((a, b) => a.start - b.start)
+    const walker = doc.createTreeWalker(wrapper, NodeFilter.SHOW_TEXT)
+    const nodes = []
+    let node, offset = 0
+    while ((node = walker.nextNode())) { nodes.push({ node, start: offset }); offset += node.textContent.length }
+    for (const { node, start } of nodes) {
+      const text = node.textContent, end = start + text.length
+      const fragment = doc.createDocumentFragment()
+      let position = start
+      for (const range of ranges.filter(range => range.end > start && range.start < end)) {
+        const first = Math.max(start, range.start), last = Math.min(end, range.end)
+        fragment.append(doc.createTextNode(text.slice(position - start, first - start)))
+        const base = doc.createElement('span')
+        base.textContent = text.slice(first - start, last - start)
+        const key = this.#wordKey(range.original), status = this.#vocabularyStatuses[key]
+        const level = this.#wordLevels[key] || range.level
+        const raw = range.translation || ''
+        const translation = status === 'known' ? '' : status === 'learning' ? raw :
+          this.#filterByLevel([[range.original, raw, level]], this.#translationLevel)[0][1]
+        if (status === 'learning') base.style.textDecoration = 'underline dotted'
+        let word = base
+        if (first === range.start && translation.trim()) {
+          word = doc.createElement('ruby')
+          word.className = 'anx-wordwise'
+          word.append(base)
+          const rt = doc.createElement('rt')
+          rt.textContent = translation
+          rt.style.cssText = 'font-size:0.75em;padding-bottom:3px;opacity:0.85;font-style:normal'
+          if (level) rt.dataset.level = level
+          const color = this.#translationColorEnabled && level && this.#translationLevelColors[level.toLowerCase()]
+          rt.style.color = color || 'inherit'
+          rt.style.fontWeight = color ? 'bold' : 'normal'
+          word.append(rt)
+        }
+        word.dataset.vocabularyWord = range.original
+        word.dataset.vocabularyTranslation = raw
+        word.tabIndex = 0
+        word.setAttribute('role', 'button')
+        word.setAttribute('aria-label', `${range.original}: ${raw}`)
+        fragment.append(word)
+        position = last
+      }
+      fragment.append(doc.createTextNode(text.slice(position - start)))
+      node.replaceWith(fragment)
+    }
     this.#updateElementDisplay(element, wrapper)
-    
-    // Insert before original content
     element.insertBefore(wrapper, element.firstChild)
   }
 
@@ -1232,29 +1392,10 @@ export class Translator {
   }
 
   async #forceTranslateVisibleElements() {
-    // Queue all visible untranslated elements for batch translation
-    this.observedElements.forEach(element => {
-      const isVisible = this.#isWithinTranslateWindow(element)
-
-      if (isVisible && !this.#translatedElements.has(element)) {
-        // Use #getElementOriginalText to survive softRetranslateAll:
-        // otherwise innerText would return the currently-rendered ruby mix.
-        const text = this.#getElementOriginalText(element)
-        if (text) {
-          this.#rememberOriginalText(element, text)
-          this.#pendingQueue.set(element, text)
-        }
-      } else if (isVisible && this.#translatedElements.has(element)) {
-        // Element already translated, just update display
-        const translationWrapper = element.querySelector('.translated-text')
-        if (translationWrapper) {
-          this.#updateElementDisplay(element, translationWrapper)
-        }
-      }
-    })
-    
-    // Flush the batch immediately (no debounce for force translate)
-    if (this.#pendingQueue.size > 0) {
+    await Promise.all([...this.observedElements].filter(element => this.#isWithinTranslateWindow(element))
+      .map(element => this.#translateElement(element)))
+    if (this.#pendingQueue.size > 0 && !this.#isScrolling) {
+      if (this.#batchTimer) { clearTimeout(this.#batchTimer); this.#batchTimer = null }
       await this.#flushBatchQueue()
     }
   }

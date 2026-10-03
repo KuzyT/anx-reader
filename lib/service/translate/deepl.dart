@@ -4,7 +4,7 @@ import 'package:anx_reader/enums/lang_list.dart';
 import 'package:anx_reader/main.dart';
 import 'package:anx_reader/service/config/config_item.dart';
 import 'package:anx_reader/service/translate/index.dart';
-import 'package:anx_reader/utils/log/common.dart';
+import 'package:anx_reader/service/translate/word_wise.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,6 +12,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 const _deeplApiUrl = 'https://api-free.deepl.com/v2/translate';
 
 class DeepLTranslateProvider extends TranslateServiceProvider {
+  DeepLTranslateProvider({Dio? client}) : _client = client ?? Dio();
+  final Dio _client;
   @override
   TranslateService get service => TranslateService.deepl;
 
@@ -61,57 +63,59 @@ class DeepLTranslateProvider extends TranslateServiceProvider {
     bool isFullText = false,
     WidgetRef? ref,
   }) async* {
-    try {
-      final config = getConfig();
-
-      if (config['api_key'].toString().isEmpty) {
-        yield* Stream.error(Exception('Invalid DeepL API key'));
-        return;
-      }
-
-      yield "...";
-
-      final Map<String, dynamic> params = {
-        'text': [text],
-        'target_lang': mapLanguageCode(to),
-      };
-
-      if (from != LangListEnum.auto) {
-        params['source_lang'] = mapLanguageCode(from);
-      }
-
-      final headers = {
-        'Authorization': 'DeepL-Auth-Key ${config['api_key']}',
-        'Content-Type': 'application/json',
-      };
-
-      final response = await Dio().post(
-        config['api_url'] ?? _deeplApiUrl,
-        data: params,
-        options: Options(
-          headers: headers,
-          validateStatus: (status) => true,
-        ),
-      );
-
-      if (response.statusCode != 200) {
-        yield* Stream.error(Exception('DeepL API error: ${response.data}'));
-        return;
-      }
-
-      final responseData = response.data;
-      if (responseData['translations'] != null &&
-          responseData['translations'].isNotEmpty) {
-        yield responseData['translations'][0]['text'];
-      } else {
-        yield* Stream.error(
-            Exception('Deepl returned unexpected data: ${response.data}'));
-      }
-    } catch (e) {
-      AnxLog.severe(
-          "Deepl ${L10n.of(navigatorKey.currentContext!).translateError}: $e");
-      yield* Stream.error(Exception(e));
+    yield '...';
+    final results = await translateBatch([text], from, to,
+        contextText: contextText, ref: ref);
+    if (results.single == '__ANX_RATE_LIMIT__') {
+      throw StateError('RateLimitException(429)');
     }
+    if (isTranslationFailure(results.single)) {
+      throw const FormatException('Empty translation response');
+    }
+    yield results.single;
+  }
+
+  @override
+  Future<List<String>> translateBatch(
+      List<String> texts, LangListEnum from, LangListEnum to,
+      {String level = 'full',
+      String? pageInfo,
+      String? contextText,
+      WidgetRef? ref}) async {
+    final config = getConfig();
+    final key = config['api_key']?.toString() ?? '';
+    if (key.isEmpty) throw StateError('Please set DeepL API Key in settings');
+    final results = <String>[];
+    for (final chunk in translationChunks(texts)) {
+      try {
+        final response = await _client.post(config['api_url'] ?? _deeplApiUrl,
+            data: {
+              'text': chunk,
+              'target_lang': mapLanguageCode(to),
+              if (from != LangListEnum.auto)
+                'source_lang': mapLanguageCode(from),
+              if (contextText != null && contextText.isNotEmpty)
+                'context': contextText
+            },
+            options: Options(headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'DeepL-Auth-Key $key'
+            }));
+        final rows =
+            response.data is Map ? response.data['translations'] : null;
+        if (rows is! List) {
+          throw const FormatException('DeepL API returned unexpected data');
+        }
+        results.addAll(orderedTranslations(
+            rows, chunk.length, (row) => row['text'] as String));
+      } catch (error) {
+        final limited =
+            error is DioException && error.response?.statusCode == 429;
+        results.addAll(List.filled(
+            chunk.length, limited ? '__ANX_RATE_LIMIT__' : '__ANX_RETRY__'));
+      }
+    }
+    return results;
   }
 
   @override

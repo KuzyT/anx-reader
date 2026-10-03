@@ -4,6 +4,7 @@
 <pre id="results">Running…</pre>
 <script type="module">
 import { Translator, TranslationMode } from './src/translator.js'
+import * as CFI from './src/epubcfi.js'
 const checks = []
 const check = (condition, message) => {
   if (!condition) throw new Error(message)
@@ -35,6 +36,11 @@ try {
   })
   await translator.setTranslationMode(TranslationMode.INTERLINEAR)
   check(p.querySelectorAll('ruby rt').length === 2, 'two interlinear hints rendered')
+  const visibleOriginal = () => { const copy = p.querySelector('.translated-text').cloneNode(true); copy.querySelectorAll('rt').forEach(rt => rt.remove()); return copy.textContent }
+  check(visibleOriginal() === 'Olá, mundo!', 'hints preserve exact original spacing and punctuation')
+  translator.updateWordLevels({ 'olá': 'b2' })
+  check(p.querySelector('rt[data-level="b2"]').textContent === 'Привет' && originals.length === 1, 'background CEFR updates hints without provider requests')
+  translator.updateWordLevels({ 'olá': 'a1' })
   translator.setVocabularyStatuses({ 'olá': 'known', 'mundo': 'learning' })
   translator.setTranslationLevel('c2')
   check(p.querySelectorAll('rt').length === 1 && p.querySelector('rt').textContent === 'мир', 'personal states override CEFR')
@@ -121,6 +127,89 @@ try {
   check(marks.p.querySelectorAll('rt').length === 0, 'combining marks stay in vocabulary keys')
   marks.translator.destroy()
   marks.frame.remove()
+  const inline = await fixture(async name => name === 'translateBatch' ?
+    JSON.stringify(['[Olá|Привет|a1], [mundo|мир|b1]!']) : '{}', '<p><em>Olá</em>, <a href="#example">mundo</a>!</p>')
+  await inline.translator.setTranslationMode(TranslationMode.INTERLINEAR)
+  check(inline.p.querySelector('.translated-text em ruby') && inline.p.querySelector('.translated-text a ruby'), 'inline emphasis and links survive rendering')
+  const originalSelection = inline.frame.contentDocument.createRange()
+  const bases = inline.p.querySelectorAll('.translated-text ruby > span')
+  originalSelection.setStart(bases[0].firstChild, 0)
+  originalSelection.setEnd(bases[1].firstChild, 5)
+  inline.frame.contentDocument.getSelection().addRange(originalSelection)
+  const selected = inline.translator.withSourceRange(originalSelection, range => ({ text: range.toString(), cfi: CFI.fromRange(range) }))
+  check(selected.text === 'Olá, mundo', 'phrase selection excludes RT hints')
+  const entireParagraph = inline.frame.contentDocument.createRange()
+  entireParagraph.selectNodeContents(inline.p)
+  check(inline.translator.withSourceRange(entireParagraph, range => range.toString()) === 'Olá, mundo!', 'element selection boundaries exclude removable overlay children')
+  inline.translator.updateWordLevels({ 'olá': 'b2' })
+  check(!inline.frame.contentDocument.getSelection().isCollapsed, 'background levels preserve active phrase selection')
+  const restoredSelection = inline.translator.resolveSourceRange(inline.frame.contentDocument, () => CFI.toRange(inline.frame.contentDocument, CFI.parse(selected.cfi)))
+  check(inline.translator.withSourceRange(restoredSelection, range => range.toString()) === 'Olá, mundo', 'saved source CFI resolves while hints are displayed')
+  await inline.translator.setTranslationMode(TranslationMode.OFF)
+  const offRange = inline.translator.resolveSourceRange(inline.frame.contentDocument, () => CFI.toRange(inline.frame.contentDocument, CFI.parse(selected.cfi)))
+  check(offRange.toString() === 'Olá, mundo' && !offRange.startContainer.parentElement.closest('.translated-text') && offRange.getBoundingClientRect().width > 0, 'OFF mode resolves to visible original source')
+  await inline.translator.setTranslationMode(TranslationMode.ORIGINAL_ONLY)
+  const onlyRange = inline.translator.resolveSourceRange(inline.frame.contentDocument, () => CFI.toRange(inline.frame.contentDocument, CFI.parse(selected.cfi)))
+  check(onlyRange.toString() === 'Olá, mundo' && !onlyRange.startContainer.parentElement.closest('.translated-text'), 'ORIGINAL_ONLY mode keeps source CFI endpoints')
+  inline.translator.destroy()
+  check(CFI.toRange(inline.frame.contentDocument, CFI.parse(selected.cfi)).toString() === 'Olá, mundo', 'saved phrase CFI survives removing translation')
+  inline.frame.remove()
+  let resolveCache
+  const delayedCache = new Promise(resolve => { resolveCache = resolve })
+  const cached = await fixture(async name => name === 'checkTranslationCache' ? delayedCache : '{}')
+  const cacheFlight = cached.translator.setTranslationMode(TranslationMode.INTERLINEAR)
+  await Promise.resolve()
+  cached.translator.cancelAndClear()
+  resolveCache(JSON.stringify({ 'Olá, mundo!': '[Olá|Привет|a1], [mundo|мир|b1]!' }))
+  await cacheFlight
+  check(!cached.p.querySelector('.translated-text'), 'cancelled generation rejects delayed cache hits')
+  cached.translator.destroy(); cached.frame.remove()
+  let batchCalls = 0
+  const warm = await fixture(async (name, text) => {
+    if (name === 'translateBatch') { batchCalls++; return '[]' }
+    return name === 'checkTranslationCache' ? JSON.stringify({ 'Olá, mundo!': '[Olá|Привет|a1], [mundo|мир|b1]!' }) : '{}'
+  })
+  const start = performance.now()
+  await warm.translator.setTranslationMode(TranslationMode.INTERLINEAR)
+  warm.translator.onRelocated('page')
+  await new Promise(resolve => setTimeout(resolve, 30))
+  check(batchCalls === 0 && warm.p.querySelector('rt') && performance.now() - start < 300, 'warm page renders from cache without provider or two-second delay')
+  warm.translator.destroy(); warm.frame.remove()
+  let partialCalls = 0
+  const partial = await fixture(async name => {
+    if (name !== 'translateBatch') return '{}'
+    partialCalls++
+    return JSON.stringify([partialCalls === 1 ? '__ANX_PARTIAL__[Olá|Привет|a1], mundo!' : '[Olá|Привет|a1], [mundo|мир|b1]!'])
+  })
+  await partial.translator.setTranslationMode(TranslationMode.INTERLINEAR)
+  check(partial.p.querySelectorAll('rt').length === 1 && partial.p.querySelector('[data-vocabulary-word="mundo"]'), 'partial result shows good hints and omitted words remain tappable')
+  await new Promise(resolve => setTimeout(resolve, 900))
+  check(partialCalls === 2 && partial.p.querySelectorAll('rt').length === 2, 'partial translation retries and completes remaining hints')
+  partial.translator.destroy(); partial.frame.remove()
+  let failedCalls = 0
+  const failed = await fixture(async name => {
+    if (name !== 'translateBatch') return '{}'
+    failedCalls++
+    return JSON.stringify([failedCalls === 1 ? '__ANX_PARTIAL__Olá, mundo!' : '[Olá|Привет|a1], [mundo|мир|b1]!'])
+  })
+  await failed.translator.setTranslationMode(TranslationMode.INTERLINEAR)
+  check(failed.p.querySelector('[data-vocabulary-word="mundo"]') && !failed.p.querySelector('rt'), 'all-failed reply keeps original tappable without caching empty success')
+  await new Promise(resolve => setTimeout(resolve, 900))
+  check(failedCalls === 2 && failed.p.querySelectorAll('rt').length === 2, 'all-failed partial remains retryable')
+  failed.translator.destroy(); failed.frame.remove()
+  const priorityCalls = []
+  const priority = await fixture(async (name, texts) => {
+    if (name !== 'translateBatch') return '{}'
+    const group = JSON.parse(texts)
+    priorityCalls.push(group)
+    return JSON.stringify(group.map(text => `[${text}|перевод|a1]`))
+  }, '<p>Current</p><p>Ahead</p>')
+  priority.translator.setAiWorkers(2)
+  const ahead = priority.frame.contentDocument.querySelectorAll('p')[1]
+  ahead.getBoundingClientRect = () => ({ top: window.innerHeight + 20, bottom: window.innerHeight + 40, left: 0, right: 100 })
+  await priority.translator.setTranslationMode(TranslationMode.INTERLINEAR)
+  check(priorityCalls.length === 2 && priorityCalls[0][0] === 'Current' && priorityCalls[1][0] === 'Ahead', 'current page completes before prefetch consumes provider slots')
+  priority.translator.destroy(); priority.frame.remove()
   window.testResult = { passed: true, checks }
 } catch (error) {
   window.testResult = { passed: false, checks, error: error.message }

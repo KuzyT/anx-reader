@@ -132,7 +132,7 @@ Input: {{texts}}
         return '''
 You are a language learning assistant building a translation cache.
 
-Task: Return the ORIGINAL text but annotate EVERY meaningful word by wrapping it as [word|translation|min_level].
+Task: Return the ORIGINAL text but annotate EVERY word by wrapping it as [word|translation|min_level].
 - "word" — the original word exactly as it appears in the text
 - "translation" — the translation of that word in {{to_locale}}
 - "min_level" — the CEFR level at which a learner would first need help with this word:
@@ -144,8 +144,8 @@ Task: Return the ORIGINAL text but annotate EVERY meaningful word by wrapping it
     c1 = advanced words
     c2 = very rare, academic or highly specialized words
 
-Skip ONLY:
-- Articles (a, an, the, um, uma, o, os, as…) and punctuation
+Keep punctuation and whitespace unchanged. Translate basic words and articles too.
+When no useful hint exists, explicitly annotate as [word||0], including:
 - Roman numerals used as chapter numbers, section markers, or ordinals
   (e.g. "I", "II", "IV", "M", "XIV" — skip when used as numerals, not words)
 - Common honorifics and abbreviations
@@ -161,13 +161,13 @@ Return a JSON array of annotated strings (one per input string).
 
 Example (translating to {{to_locale}}):
 Input: ["The astronomer observed a strange celestial phenomenon near Goodman street", "I", "Mr.", "XIV"]
-Output: ["The [astronomer|астроном|a2] [observed|наблюдал|a1] a [strange|странный|a1] [celestial|небесный|b2] [phenomenon|явление|b1] [near|рядом с|a1] [Goodman|хороший человек (good+man)|a1] [street|улица|0]", "I", "Mr.", "XIV"]
+Output: ["[The|определённый артикль|a1] [astronomer|астроном|a2] [observed|наблюдал|a1] [a|неопределённый артикль|a1] [strange|странный|a1] [celestial|небесный|b2] [phenomenon|явление|b1] [near|рядом с|a1] [Goodman|хороший человек (good+man)|a1] [street|улица|0]", "[I||0]", "[Mr||0].", "[XIV||0]"]
 
 IMPORTANT:
 1. Annotate ALL meaningful words — this is a full translation cache, not filtered output.
 2. CRITICAL: All translations inside brackets MUST be strictly in {{to_locale}}.
 3. Do NOT skip words because they seem "easy" — assign them the correct min_level instead.
-4. Skipped items (roman numerals, abbreviations, proper phonetic names) must be returned AS-IS, unchanged.
+4. Items without useful hints (roman numerals, abbreviations, proper phonetic names) must use [word||0]. Do not omit them.
 5. Return ONLY a valid JSON array, no extra text.
 
 Input: {{texts}}

@@ -2,7 +2,7 @@ import 'package:anx_reader/enums/lang_list.dart';
 import 'package:anx_reader/l10n/generated/L10n.dart';
 import 'package:anx_reader/service/config/config_item.dart';
 import 'package:anx_reader/service/translate/index.dart';
-import 'package:anx_reader/utils/log/common.dart';
+import 'package:anx_reader/service/translate/word_wise.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,6 +12,8 @@ const _urlMicrosoftApi =
     'https://api.cognitive.microsofttranslator.com/translate';
 
 class MicrosoftApiTranslateProvider extends TranslateServiceProvider {
+  MicrosoftApiTranslateProvider({Dio? client}) : _client = client ?? Dio();
+  final Dio _client;
   @override
   TranslateService get service => TranslateService.microsoftApi;
 
@@ -42,51 +44,61 @@ class MicrosoftApiTranslateProvider extends TranslateServiceProvider {
     bool isFullText = false,
     WidgetRef? ref,
   }) async* {
-    try {
-      final config = getConfig();
-      final apiKey = config['api_key']?.toString() ?? '';
-      final region = config['region']?.toString() ?? '';
-
-      if (apiKey.isEmpty) {
-        yield* Stream.error(
-            Exception('Please set Microsoft API Key in settings'));
-        return;
-      }
-
-      yield "...";
-
-      final params = {
-        'api-version': '3.0',
-        'from': from == LangListEnum.auto ? '' : mapLanguageCode(from),
-        'to': mapLanguageCode(to),
-      };
-      final body = [
-        {'Text': text},
-      ];
-      final uri = Uri.parse(_urlMicrosoftApi).replace(queryParameters: params);
-      final headers = {
-        'Content-Type': 'application/json',
-        'Ocp-Apim-Subscription-Key': apiKey,
-        if (region.isNotEmpty) 'Ocp-Apim-Subscription-Region': region,
-      };
-
-      final response = await Dio().post(
-        uri.toString(),
-        data: body,
-        options: Options(headers: headers),
-      );
-
-      if (response.statusCode == 200 &&
-          response.data is List &&
-          response.data.isNotEmpty) {
-        yield response.data[0]['translations'][0]['text'];
-      } else {
-        yield* Stream.error(Exception('Microsoft API Error: ${response.data}'));
-      }
-    } catch (e) {
-      AnxLog.severe("Translate Microsoft API Error: error=$e");
-      yield* Stream.error(Exception(e));
+    yield '...';
+    final results = await translateBatch([text], from, to,
+        contextText: contextText, ref: ref);
+    if (results.single == '__ANX_RATE_LIMIT__') {
+      throw StateError('RateLimitException(429)');
     }
+    if (isTranslationFailure(results.single)) {
+      throw const FormatException('Empty translation response');
+    }
+    yield results.single;
+  }
+
+  @override
+  Future<List<String>> translateBatch(
+      List<String> texts, LangListEnum from, LangListEnum to,
+      {String level = 'full',
+      String? pageInfo,
+      String? contextText,
+      WidgetRef? ref}) async {
+    final config = getConfig();
+    final key = config['api_key']?.toString() ?? '';
+    if (key.isEmpty) {
+      throw StateError('Please set Microsoft API Key in settings');
+    }
+    final region = config['region']?.toString() ?? '';
+    final results = <String>[];
+    for (final chunk in translationChunks(texts)) {
+      try {
+        final response = await _client.post(_urlMicrosoftApi,
+            queryParameters: {
+              'api-version': '3.0',
+              'to': mapLanguageCode(to),
+              if (from != LangListEnum.auto) 'from': mapLanguageCode(from)
+            },
+            data: chunk.map((text) => {'Text': text}).toList(),
+            options: Options(headers: {
+              'Content-Type': 'application/json',
+              'Ocp-Apim-Subscription-Key': key,
+              if (region.isNotEmpty && region != 'global')
+                'Ocp-Apim-Subscription-Region': region
+            }));
+        final rows = response.data;
+        if (rows is! List) {
+          throw const FormatException('Microsoft API returned unexpected data');
+        }
+        results.addAll(orderedTranslations(rows, chunk.length,
+            (row) => row['translations'][0]['text'] as String));
+      } catch (error) {
+        final limited =
+            error is DioException && error.response?.statusCode == 429;
+        results.addAll(List.filled(
+            chunk.length, limited ? '__ANX_RATE_LIMIT__' : '__ANX_RETRY__'));
+      }
+    }
+    return results;
   }
 
   @override

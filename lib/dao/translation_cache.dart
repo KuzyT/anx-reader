@@ -1,6 +1,10 @@
 import 'package:anx_reader/dao/database.dart';
 import 'package:flutter/foundation.dart';
 
+String translationCacheLevel(
+        String format, String source, String target, String provider) =>
+    '$format:v2:$provider:${source.toLowerCase()}:${target.toLowerCase()}';
+
 /// DAO for translation cache.
 /// Cache is keyed by (book_id, level, original_text).
 /// Independent of AI model — same cache works across model switches.
@@ -31,7 +35,7 @@ class TranslationCacheDao {
     return result;
   }
 
-   /// Save translations to cache (INSERT OR REPLACE to refresh stale entries).
+  /// Save translations to cache (INSERT OR REPLACE to refresh stale entries).
   Future<void> insertTranslations(
       int bookId, String level, Map<String, String> translations) async {
     if (translations.isEmpty) return;
@@ -72,7 +76,7 @@ class TranslationCacheDao {
     return count;
   }
 
-   /// Clear specific translations based on book, level and optional texts.
+  /// Clear specific translations based on book, level and optional texts.
   Future<int> clearSpecific(int bookId,
       {String? level, List<String>? originals}) async {
     final db = await DBHelper().database;
@@ -80,8 +84,9 @@ class TranslationCacheDao {
     List<dynamic> whereArgs = [bookId];
 
     if (level != null) {
-      where += ' AND level = ?';
-      whereArgs.add(level);
+      where += ' AND (level = ? OR substr(level, 1, ?) = ?)';
+      final prefix = '$level:v2:';
+      whereArgs.addAll([level, prefix.length, prefix]);
     }
 
     if (originals != null && originals.isNotEmpty) {

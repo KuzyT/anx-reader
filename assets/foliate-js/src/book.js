@@ -147,22 +147,18 @@ const handleSelection = (view, doc, index) => {
   if (!range) return;
 
   const position = getPosition(range);
-  const cfi = view.getCFI(index, range);
-  const lang = 'en-US'
-
-  let text = selection.toString();
-  if (!text) {
-    const newSelection = range.startContainer.ownerDocument.getSelection();
-    newSelection.removeAllRanges();
-    newSelection.addRange(range);
-    text = newSelection.toString();
-  }
-
-  const contextText = buildRangeContextText(range);
+  const source = view.translator.withSourceRange(range, original => ({
+    cfi: view.getCFI(index, original),
+    text: original.toString(),
+    contextText: buildRangeContextText(original),
+  }));
+  const { cfi, text, contextText } = source;
+  const lang = 'en-US';
+  const visibleRange = getSelectionRange(doc.getSelection()) ?? range;
 
   onSelectionEnd({
     index,
-    range,
+    range: visibleRange,
     lang,
     cfi,
     pos: position,

@@ -198,7 +198,7 @@ export class View extends HTMLElement {
     }
     
     // Notify translator of scroll/relocate for debouncing
-    this.#translator?.onRelocated?.()
+    this.#translator?.onRelocated?.(reason)
   }
 
   #onLoad({ doc, index }) {
@@ -224,8 +224,9 @@ export class View extends HTMLElement {
   #handleLinks(doc, index) {
     const { book } = this
     const section = book.sections[index]
-    for (const a of doc.querySelectorAll('a[href]'))
-      a.addEventListener('click', e => {
+    doc.addEventListener('click', e => {
+        const a = e.target.closest?.('a[href]')
+        if (!a) return
         e.preventDefault()
         e.stopPropagation()
         const href_ = a.getAttribute('href')
@@ -413,15 +414,17 @@ export class View extends HTMLElement {
   getCFI(index, range) {
     const baseCFI = this.book.sections[index].cfi ?? CFI.fake.fromIndex(index)
     if (!range) return baseCFI
-    return CFI.joinIndir(baseCFI, CFI.fromRange(range))
+    return this.#translator.withSourceRange(range, source => CFI.joinIndir(baseCFI, CFI.fromRange(source)))
   }
   resolveCFI(cfi) {
-    if (this.book.resolveCFI)
-      return this.book.resolveCFI(cfi)
+    if (this.book.resolveCFI) {
+      const resolved = this.book.resolveCFI(cfi)
+      return { ...resolved, anchor: doc => this.#translator.resolveSourceRange(doc, () => resolved.anchor(doc)) }
+    }
     else {
       const parts = CFI.parse(cfi)
       const index = CFI.fake.toIndex((parts.parent ?? parts).shift())
-      const anchor = doc => CFI.toRange(doc, parts)
+      const anchor = doc => this.#translator.resolveSourceRange(doc, () => CFI.toRange(doc, parts))
       return { index, anchor }
     }
   }

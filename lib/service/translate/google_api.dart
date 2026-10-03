@@ -2,7 +2,7 @@ import 'package:anx_reader/enums/lang_list.dart';
 import 'package:anx_reader/l10n/generated/L10n.dart';
 import 'package:anx_reader/service/config/config_item.dart';
 import 'package:anx_reader/service/translate/index.dart';
-import 'package:anx_reader/utils/log/common.dart';
+import 'package:anx_reader/service/translate/word_wise.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,6 +12,8 @@ const _urlGoogleApi =
     'https://translation.googleapis.com/language/translate/v2';
 
 class GoogleApiTranslateProvider extends TranslateServiceProvider {
+  GoogleApiTranslateProvider({Dio? client}) : _client = client ?? Dio();
+  final Dio _client;
   @override
   TranslateService get service => TranslateService.googleApi;
 
@@ -42,48 +44,55 @@ class GoogleApiTranslateProvider extends TranslateServiceProvider {
     bool isFullText = false,
     WidgetRef? ref,
   }) async* {
-    try {
-      final config = getConfig();
-      final apiKey = config['api_key']?.toString() ?? '';
-
-      if (apiKey.isEmpty) {
-        yield* Stream.error(Exception('Please set Google API Key in settings'));
-        return;
-      }
-
-      yield "...";
-
-      final params = {
-        'key': apiKey,
-        'q': text,
-        'target': mapLanguageCode(to),
-        'format': 'text',
-      };
-
-      if (from != LangListEnum.auto) {
-        params['source'] = mapLanguageCode(from);
-      }
-
-      final uri = Uri.parse(_urlGoogleApi).replace(queryParameters: params);
-
-      final response = await Dio().post(uri.toString());
-
-      if (response.statusCode == 200) {
-        final data = response.data;
-        if (data['data'] != null &&
-            data['data']['translations'] != null &&
-            (data['data']['translations'] as List).isNotEmpty) {
-          yield data['data']['translations'][0]['translatedText'];
-        } else {
-          yield* Stream.error(Exception('Google API returned unexpected data'));
-        }
-      } else {
-        yield* Stream.error(Exception('Google API Error: ${response.data}'));
-      }
-    } catch (e) {
-      AnxLog.severe("Translate Google API Error: error=$e");
-      yield* Stream.error(Exception(e));
+    yield '...';
+    final results = await translateBatch([text], from, to,
+        contextText: contextText, ref: ref);
+    if (results.single == '__ANX_RATE_LIMIT__') {
+      throw StateError('RateLimitException(429)');
     }
+    if (isTranslationFailure(results.single)) {
+      throw const FormatException('Empty translation response');
+    }
+    yield results.single;
+  }
+
+  @override
+  Future<List<String>> translateBatch(
+      List<String> texts, LangListEnum from, LangListEnum to,
+      {String level = 'full',
+      String? pageInfo,
+      String? contextText,
+      WidgetRef? ref}) async {
+    final key = getConfig()['api_key']?.toString() ?? '';
+    if (key.isEmpty) throw StateError('Please set Google API Key in settings');
+    final results = <String>[];
+    for (final chunk in translationChunks(texts)) {
+      try {
+        final response = await _client.post(_urlGoogleApi, queryParameters: {
+          'key': key
+        }, data: {
+          'q': chunk,
+          'target': mapLanguageCode(to),
+          'format': 'text',
+          if (from != LangListEnum.auto) 'source': mapLanguageCode(from)
+        });
+        final data = response.data;
+        final rows = data is Map && data['data'] is Map
+            ? data['data']['translations']
+            : null;
+        if (rows is! List) {
+          throw const FormatException('Google API returned unexpected data');
+        }
+        results.addAll(orderedTranslations(
+            rows, chunk.length, (row) => row['translatedText'] as String));
+      } catch (error) {
+        final limited =
+            error is DioException && error.response?.statusCode == 429;
+        results.addAll(List.filled(
+            chunk.length, limited ? '__ANX_RATE_LIMIT__' : '__ANX_RETRY__'));
+      }
+    }
+    return results;
   }
 
   @override

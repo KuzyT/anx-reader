@@ -137,8 +137,9 @@ Stream<String> _generateStream({
         yield 'Error: Exception: Cancelled by user or system';
         return;
       }
-      AnxLog.warning(
-          'Failed to use new provider system, falling back to legacy: $e');
+      AnxLog.warning('Failed to use new provider system: $e');
+      yield _mapError(e);
+      return;
     }
   }
 
@@ -209,8 +210,9 @@ Stream<String> _generateStream({
         }
       }
     } catch (e) {
-      AnxLog.warning(
-          'Failed to use no-ref new provider system, falling back to legacy: $e');
+      AnxLog.warning('Failed to use no-ref new provider system: $e');
+      yield _mapError(e);
+      return;
     }
   }
 

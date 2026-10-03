@@ -111,6 +111,7 @@ export class Translator {
         this.#updateTranslationDisplay()
       } else if (oldMode === TranslationMode.OFF) {
         // Turn on translation - force translate visible elements and wait for completion
+        this.#updateTranslationDisplay()
         await this.#forceTranslateVisibleElements()
       } else {
         // Just update display mode
@@ -482,6 +483,20 @@ export class Translator {
       source.setEnd(last.node, last.offset)
       return callback(source)
     })
+  }
+
+  transformSourceDocument(doc, callback) {
+    const changed = this.#withSourceDocument(doc, () => {
+      const before = doc.body.textContent
+      callback()
+      return before !== doc.body.textContent
+    })
+    if (!changed) return
+    for (const element of this.observedElements) {
+      if (element.ownerDocument === doc) element.removeAttribute('data-anx-original-text')
+    }
+    // A script/quote conversion changes source offsets and translation cache keys.
+    this.retranslateAll()
   }
 
   resolveSourceRange(doc, createRange) {

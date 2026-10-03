@@ -605,6 +605,10 @@ export class View extends HTMLElement {
   }
   
   // Translation control methods
+  transformSourceDocument(doc, callback) {
+    this.#translator.transformSourceDocument(doc, callback)
+  }
+
   setTranslationMode(mode) {
     this.#translator.setTranslationMode(mode)
   }

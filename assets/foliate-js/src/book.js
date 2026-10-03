@@ -1390,7 +1390,7 @@ class Reader {
     // this.#originalContent = this.#doc.cloneNode(true)
 
     // save original content
-    this.#originalContent = [];
+    this.#originalContent = new Map();
     const walker = document.createTreeWalker(
       this.#doc.body,
       NodeFilter.SHOW_TEXT,
@@ -1398,29 +1398,23 @@ class Reader {
       false
     );
     while (walker.nextNode()) {
-      this.#originalContent.push(walker.currentNode.textContent);
+      this.#originalContent.set(walker.currentNode, walker.currentNode.textContent);
     }
   }
 
   #restoreOriginalContent = () => {
     // this.#doc.body.innerHTML = this.#originalContent.body.innerHTML
 
-    const walker = document.createTreeWalker(
-      this.#doc.body,
-      NodeFilter.SHOW_TEXT,
-      null,
-      false
-    );
-    let node;
-    let index = 0;
-    while (node = walker.nextNode()) {
-      node.textContent = this.#originalContent[index++];
+    for (const [node, text] of this.#originalContent) {
+      if (node.isConnected) node.textContent = text;
     }
   }
 
   readingFeatures = () => {
-    this.#restoreOriginalContent()
-    readingFeaturesDocHandler(this.#doc)
+    this.view.transformSourceDocument(this.#doc, () => {
+      this.#restoreOriginalContent()
+      readingFeaturesDocHandler(this.#doc)
+    })
   }
 
   getChapterContent = () => {

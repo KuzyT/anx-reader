@@ -9,6 +9,7 @@ import 'package:anx_reader/utils/save_file_to_download.dart';
 import 'package:anx_reader/widgets/reading_page/vocabulary_word_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 class VocabularyPage extends ConsumerStatefulWidget {
@@ -161,6 +162,22 @@ class _VocabularyPageState extends ConsumerState<VocabularyPage> {
     }
   }
 
+  String _cardText(VocabularyCard card) =>
+      '${card.word} — ${card.translation}\n${card.contextText}\n${card.bookTitle} · ${card.chapter}';
+
+  Future<void> _share(VocabularyCard card, BuildContext buttonContext) async {
+    try {
+      final box = buttonContext.findRenderObject() as RenderBox?;
+      await SharePlus.instance.share(ShareParams(
+          text: _cardText(card),
+          title: card.word,
+          sharePositionOrigin:
+              box == null ? null : box.localToGlobal(Offset.zero) & box.size));
+    } catch (_) {
+      if (mounted) _message(L10n.of(context).vocabularyActionError);
+    }
+  }
+
   Future<void> _export() async {
     final l = L10n.of(context);
     setState(() => _exporting = true);
@@ -302,12 +319,22 @@ class _VocabularyPageState extends ConsumerState<VocabularyPage> {
                                               onPressed: () async {
                                                 await Clipboard.setData(
                                                     ClipboardData(
-                                                        text:
-                                                            '${card.word} — ${card.translation}\n${card.contextText}\n${card.bookTitle} · ${card.chapter}'));
+                                                        text: _cardText(card)));
                                                 _message(l.notesPageCopied);
                                               },
                                               tooltip: l.commonCopy,
                                               icon: const Icon(Icons.copy)),
+                                          Builder(
+                                              builder: (buttonContext) =>
+                                                  IconButton(
+                                                      onPressed:
+                                                          () =>
+                                                              _share(card,
+                                                                  buttonContext),
+                                                      tooltip:
+                                                          l.vocabularyShare,
+                                                      icon: const Icon(Icons
+                                                          .share_outlined))),
                                           IconButton(
                                               onPressed: card.cfi.isEmpty
                                                   ? null

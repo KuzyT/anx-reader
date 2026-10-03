@@ -9,6 +9,7 @@ import 'package:anx_reader/service/translate/deepl.dart';
 import 'package:anx_reader/service/translate/google_api.dart';
 import 'package:anx_reader/service/translate/microsoft_api.dart';
 import 'package:anx_reader/service/translate/web_view.dart';
+import 'package:anx_reader/service/translate/word_wise.dart';
 import 'package:anx_reader/utils/env_var.dart';
 import 'package:anx_reader/utils/log/common.dart';
 import 'package:anx_reader/utils/ai_reasoning_parser.dart';
@@ -127,7 +128,7 @@ abstract class TranslateServiceProvider {
         }
 
         if (lastResult != null &&
-            lastResult.trim().isNotEmpty &&
+            !isTranslationFailure(lastResult) &&
             lastResult != '...') {
           return lastResult;
         }
@@ -135,6 +136,7 @@ abstract class TranslateServiceProvider {
         throw Exception(
             'Translation returned no valid result: ${lastResult ?? 'No result'}');
       } catch (e) {
+        if (e.toString().contains('429')) rethrow;
         if (attempt < maxRetries) {
           AnxLog.warning(
               'Translation attempt ${attempt + 1} failed with exception: $e. Retrying...');
@@ -158,11 +160,26 @@ abstract class TranslateServiceProvider {
     LangListEnum to, {
     String level = 'full',
     String? pageInfo,
+    String? contextText,
     WidgetRef? ref,
   }) async {
-    final futures = texts.map((text) =>
-        translateTextOnly(text, from, to, isFullText: true, ref: ref));
-    return await Future.wait(futures);
+    final results = List.filled(texts.length, '__ANX_RETRY__');
+    var next = 0;
+    Future<void> worker() async {
+      while (next < texts.length) {
+        final index = next++;
+        try {
+          final value = await translateTextOnly(texts[index], from, to,
+              isFullText: true, contextText: contextText, ref: ref);
+          if (!isTranslationFailure(value)) results[index] = value;
+        } catch (_) {
+          // Leave only this item retryable; keep completed siblings.
+        }
+      }
+    }
+
+    await Future.wait(List.generate(texts.length.clamp(0, 4), (_) => worker()));
+    return results;
   }
 
   /// Returns the current configuration.

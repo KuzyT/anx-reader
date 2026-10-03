@@ -810,6 +810,8 @@
   "translateGoogleCloud": "Google Cloud API",
   "translateDeepL": "DeepL API",
   "translateTip": "Подсказка",
+  "translationProviderNeedsKey": "Для {provider} нужен API-ключ. Откройте Настройки → Перевод: настройте его или выберите AI.",
+  "@translationProviderNeedsKey": {"placeholders": {"provider": {"type": "String"}}},
   "translateAzureHelpText": "Microsoft Azure Translate имеет бесплатную квоту 2 млн символов в месяц.",
   "translateGoogleHelpText": "Google Cloud Translation API имеет бесплатную квоту 500 тыс. символов в месяц.",
   "translateDeepLHelpText": "Бесплатный план DeepL API имеет бесплатную квоту 500 тыс. символов в месяц.",
@@ -940,5 +942,11 @@
   "vocabularyLoadError": "Не удалось загрузить словарь. Попробуйте снова.",
   "vocabularyOpenContext": "Открыть пример в книге",
   "vocabularyContextError": "Книга или позиция чтения недоступны.",
-  "vocabularyStatusHelp": "Знаю: скрывать подсказку. Изучаю: всегда показывать перевод и подчёркивать слово. Показывать обычно: учитывать уровень чтения."
+  "vocabularyStatusHelp": "Знаю: скрывать подсказку. Изучаю: всегда показывать перевод и подчёркивать слово. Показывать обычно: учитывать уровень чтения.",
+  "vocabularySpeak": "Произнести",
+  "vocabularyExplain": "Объяснить в контексте (AI)",
+  "vocabularyActionError": "Не удалось выполнить действие. Проверьте настройки озвучки или AI и повторите.",
+  "vocabularyAddSelection": "В словарь",
+  "vocabularySelectionTooLong": "Выделите слово или короткую фразу (до 240 символов).",
+  "vocabularyShare": "Поделиться карточкой"
 }

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:anx_reader/config/shared_preference_provider.dart';
 import 'package:anx_reader/enums/ai_prompts.dart';
@@ -161,11 +162,13 @@ PromptTemplatePayload generatePromptTranslateBatch(
 }
 
 PromptTemplatePayload generatePromptTranslateBatchWordLevel(
-    String textsJson, String toLocale, String fromLocale, String level) {
+    String textsJson, String toLocale, String fromLocale, String level,
+    {String? contextText}) {
   final prompt = Prefs().getAiPrompt(AiPrompts.translateBatchWordLevel);
   final normalized = _normalizePrompt(prompt);
   final template = ChatPromptTemplate.fromPromptMessages([
-    HumanChatMessagePromptTemplate.fromTemplate(normalized),
+    HumanChatMessagePromptTemplate.fromTemplate(
+        '$normalized\nOutput contract: annotate every word, including basic words. If no hint is useful, explicitly use [word||0]. Keep original spelling, punctuation and spacing. Return one annotated string per input; CEFR filtering is applied by the reader, not in the response.${contextText == null ? '' : '\nUse this sentence as context for the requested words: {context}'}'),
   ]);
   return PromptTemplatePayload(
     template: template,
@@ -174,6 +177,7 @@ PromptTemplatePayload generatePromptTranslateBatchWordLevel(
       'to_locale': toLocale,
       'from_locale': fromLocale,
       'level': level.toUpperCase(),
+      if (contextText != null) 'context': jsonEncode(contextText),
     },
     identifier: AiPrompts.translateBatchWordLevel,
   );

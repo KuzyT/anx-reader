@@ -1,0 +1,67 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Reader translation integration check</title>
+<style>html,body { height:100vh; margin:0 } #results { position:fixed;bottom:0;z-index:100;background:white }</style>
+<div id="footnote-dialog"><main></main></div><pre id="results">Running…</pre>
+<script type="module">
+const bundled = new URLSearchParams(location.search).has('bundle')
+const style = {fontSize:1.2,fontName:'book',fontPath:'',fontWeight:400,letterSpacing:0,spacing:1.5,paragraphSpacing:1,textIndent:0,fontColor:'#111111',backgroundColor:'#ffffff',topMargin:20,bottomMargin:20,sideMargin:5,justify:false,hyphenate:false,pageTurnStyle:'noAnimation',maxColumnCount:2,columnThreshold:400,writingMode:'horizontal-tb',backgroundImage:'none',codeHighlightTheme:'off',customCSS:'',customCSSEnabled:false,useBookStyles:true}
+const rules = {convertChineseMode:'none',bionicReadingMode:false}
+const params = new URLSearchParams({url:JSON.stringify('/fixture.fb2'),importing:'false',initialCfi:'null',style:JSON.stringify(style),readingRules:JSON.stringify(rules)})
+history.replaceState(null,'','?'+params)
+const realFetch = window.fetch.bind(window)
+window.fetch = (url,...args) => url === '/fixture.fb2' ? Promise.resolve(new Response('<?xml version="1.0"?><FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"><description><title-info><book-title>Fixture</book-title><lang>pt</lang></title-info></description><body><section><title><p>I</p><p>O RAPAZ QUE SOBREVIVEU</p></title><p><strong>M</strong>r. e Mrs. Dursley, que vivem no número quatro.</p><p>Olá, <emphasis>mundo</emphasis>!</p><p>汉语</p></section></body></FictionBook>')) : realFetch(url,...args)
+let loaded, requests = 0
+const ready = new Promise(resolve=>loaded=resolve)
+window.flutter_inappwebview = {callHandler:async (name,texts) => {
+ if(name==='onLoadEnd') loaded()
+ if(name==='translateBatch') { requests++; return JSON.stringify(JSON.parse(texts).map(text=>text.replace(/[\p{L}\p{M}\p{N}]+/gu,word=>`[${word}|перевод|b2]`))) }
+ return '{}'
+}}
+try {
+ if(bundled) { const script=document.createElement('script');script.type='module';script.src='./dist/bundle.js';document.head.append(script) }
+ else await import('./src/book.js')
+ await ready
+ const doc = reader.view.renderer.getContents()[0].doc
+ const source = doc.body.textContent
+ reader.view.setTranslationLevel('a1')
+ reader.view.setTranslationMode('interlinear')
+ await new Promise(resolve=>setTimeout(resolve,800))
+ const checks = []
+ const check = (condition,message) => { if(!condition) throw new Error(message);checks.push(message) }
+ const visibleSource = () => [...doc.querySelectorAll('.translated-text')].map(wrapper=>{
+   const copy=wrapper.cloneNode(true);copy.querySelectorAll('rt').forEach(rt=>rt.remove());return copy.textContent
+ }).join('')
+ check(visibleSource()===source,'initial ruby preserves the loaded book source')
+ const requestCount = requests
+ for(let i=0;i<10;i++) {
+   const before = doc.body.innerText
+   window.readingFeatures(rules)
+   check(doc.body.innerText===before,'readingFeatures preserves hints, pass '+i)
+   reader.view.setVocabularyStatuses({})
+   reader.view.setTranslationLevel(i%2?'a1':'c2')
+   check(visibleSource()===source,'repeated redraw preserves source, pass '+i)
+ }
+ check(requests===requestCount,'unchanged reading features do not retranslate')
+ reader.view.setTranslationMode('off')
+ check(doc.body.innerText.includes('O RAPAZ QUE SOBREVIVEU'),'off mode keeps original heading')
+ check(!doc.body.innerText.includes('перевод'),'off mode hides hints')
+ window.readingFeatures(rules)
+ check(doc.body.textContent.replaceAll('перевод','').includes('Olá, mundo!'),'off-mode reading features keep inline source')
+ reader.view.setTranslationMode('interlinear')
+ await new Promise(resolve=>setTimeout(resolve,50))
+ check(doc.body.innerText.includes('перевод'),'return from off restores cached hints')
+ check(visibleSource()===source,'return to interlinear keeps exactly one copy')
+ window.readingFeatures({...rules,convertChineseMode:'s2t'})
+ await new Promise(resolve=>setTimeout(resolve,800))
+ check(visibleSource().includes('漢語')&&!visibleSource().includes('汉语'),'source conversion rebuilds hints using converted cache keys')
+ window.readingFeatures(rules)
+ await new Promise(resolve=>setTimeout(resolve,800))
+ check(visibleSource()===source,'disabling conversion restores the exact initial source')
+ window.testResult = {passed:true,checks,bundled}
+ document.getElementById('results').textContent='PASS: '+checks.length+' production reader checks'
+} catch(error) {
+ window.testResult = {...window.testResult,passed:false,error:String(error)}
+ document.getElementById('results').textContent=String(error)
+}
+</script>

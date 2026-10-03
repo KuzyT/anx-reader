@@ -317,6 +317,17 @@ class ExcerptMenuState extends State<ExcerptMenu> {
             icon: const Icon(Icons.translate),
             text: L10n.of(context).contextMenuTranslate,
           ),
+          IconAndText(
+            compact: true,
+            icon: const Icon(Icons.bookmark_add_outlined),
+            text: L10n.of(context).vocabularyAddSelection,
+            onTap: () {
+              final player = epubPlayerKey.currentState;
+              // The player captures original context before closing the selection overlay.
+              player?.addVocabularySelection(
+                  widget.annoContent, widget.annoCfi);
+            },
+          ),
           // narrate
           IconAndText(
             compact: true,

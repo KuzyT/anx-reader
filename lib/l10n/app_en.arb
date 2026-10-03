@@ -856,6 +856,8 @@
   "translateGoogleCloud": "Google Cloud API",
   "translateDeepL": "DeepL API",
   "translateTip": "Tip",
+  "translationProviderNeedsKey": "{provider} needs an API key. Open Settings → Translation to configure it or select AI.",
+  "@translationProviderNeedsKey": {"placeholders": {"provider": {"type": "String"}}},
   "translateAzureHelpText": "Microsoft Azure Translate has a free quota of 2M chars/month.",
   "translateGoogleHelpText": "Google Cloud Translation API has a free quota of 500k chars/month.",
   "translateDeepLHelpText": "DeepL API Free plan has a free quota of 500k chars/month.",
@@ -1003,5 +1005,11 @@
   "vocabularyLoadError": "Could not load vocabulary. Please try again.",
   "vocabularyOpenContext": "Open example in book",
   "vocabularyContextError": "This book or reading position is unavailable.",
-  "vocabularyStatusHelp": "Known: hide hints. Learning: always show hints and underline the word. Show normally: use the reading level."
+  "vocabularyStatusHelp": "Known: hide hints. Learning: always show hints and underline the word. Show normally: use the reading level.",
+  "vocabularySpeak": "Pronounce",
+  "vocabularyExplain": "Explain in context (AI)",
+  "vocabularyActionError": "Action failed. Check your voice or AI settings and try again.",
+  "vocabularyAddSelection": "Add to vocabulary",
+  "vocabularySelectionTooLong": "Select a word or a short phrase (up to 240 characters).",
+  "vocabularyShare": "Share card"
 }

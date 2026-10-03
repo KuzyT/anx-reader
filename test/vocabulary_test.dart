@@ -59,6 +59,20 @@ void main() {
       expect(await vocabularyDao.cards(status: VocabularyStatus.learning),
           isEmpty);
       await vocabularyDao.setStatus(card.wordId, VocabularyStatus.learning);
+      final cacheKey = translationCacheLevel('word_wise', 'pt', 'ru', 'ai');
+      await translationCacheDao
+          .insertTranslations(1, cacheKey, {'Olá': '[Olá|привет|a1]'});
+      await translationCacheDao.insertTranslations(
+          1, '$cacheKey:partial', {'incomplete': 'partial'});
+      await translationCacheDao
+          .insertTranslations(1, 'full:v2:ai:pt:ru', {'Olá': 'привет'});
+      expect(await translationCacheDao.getTranslations(1, 'word_wise', ['Olá']),
+          isEmpty);
+      expect(await translationCacheDao.clearSpecific(1, level: 'word_wise'), 2);
+      expect(
+          await translationCacheDao
+              .getTranslations(1, 'full:v2:ai:pt:ru', ['Olá']),
+          {'Olá': 'привет'});
       await translationCacheDao.clearAll();
       expect((await vocabularyDao.cards()).length, 3);
       final csv =
@@ -130,6 +144,7 @@ void main() {
       await L10n.delegate.load(const Locale('en'));
     });
     var source = LangListEnum.auto;
+    var speaks = 0, explanations = 0;
     try {
       await tester.pumpWidget(MaterialApp(
           localizationsDelegates: L10n.localizationsDelegates,
@@ -139,18 +154,29 @@ void main() {
               builder: (context) => Scaffold(
                   body: TextButton(
                       onPressed: () => showVocabularyWordDialog(context,
-                          book: Book.mock(),
-                          word: 'Olá',
-                          translation: '',
-                          contextText: 'Olá, mundo!',
-                          chapter: 'Chapter',
-                          cfi: 'epubcfi(/6/2!/4/2:0)',
-                          sourceLanguage: source,
-                          targetLanguage: LangListEnum.russian),
+                              book: Book.mock(),
+                              word: 'Olá',
+                              translation: '',
+                              contextText: 'Olá, mundo!',
+                              chapter: 'Chapter',
+                              cfi: 'epubcfi(/6/2!/4/2:0)',
+                              sourceLanguage: source,
+                              targetLanguage: LangListEnum.russian,
+                              onSpeak: () async {
+                            speaks++;
+                          }, onExplain: (from, to) async {
+                            explanations++;
+                            return 'Context explanation';
+                          }),
                       child: const Text('Open'))))));
       await tester.pumpAndSettle();
+      expect(speaks, 0);
+      expect(explanations, 0);
       await tester.tap(find.text('Open'));
       await tester.pumpAndSettle();
+      await tester.tap(find.text('Pronounce'));
+      await tester.pumpAndSettle();
+      expect(speaks, 1);
       await tester.tap(find.text('I know this'));
       await tester.pumpAndSettle();
       expect(find.byType(AlertDialog), findsOneWidget);
@@ -160,6 +186,10 @@ void main() {
       source = LangListEnum.portuguese;
       await tester.tap(find.text('Open'));
       await tester.pumpAndSettle();
+      await tester.tap(find.text('Explain in context (AI)'));
+      await tester.pumpAndSettle();
+      expect(explanations, 1);
+      expect(find.text('Context explanation'), findsOneWidget);
       await tester.tap(find.text('Learning'));
       await tester.pumpAndSettle();
       expect(

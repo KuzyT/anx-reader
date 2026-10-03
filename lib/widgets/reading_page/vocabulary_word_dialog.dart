@@ -23,6 +23,8 @@ Future<LangListEnum?> showVocabularyWordDialog(
   required String cfi,
   required LangListEnum sourceLanguage,
   required LangListEnum targetLanguage,
+  Future<void> Function()? onSpeak,
+  Future<String> Function(LangListEnum source, LangListEnum target)? onExplain,
 }) async {
   final controller = TextEditingController(text: translation);
   LangListEnum? source =
@@ -31,6 +33,8 @@ Future<LangListEnum?> showVocabularyWordDialog(
       targetLanguage == LangListEnum.auto ? null : targetLanguage;
   var busy = false;
   String? error;
+  String? explanation;
+  var speaking = false, explaining = false;
   try {
     final route = DialogRoute<LangListEnum>(
         context: context,
@@ -115,6 +119,71 @@ Future<LangListEnum?> showVocabularyWordDialog(
                                   decoration: InputDecoration(
                                       labelText: l.vocabularyTranslation)),
                               const SizedBox(height: 8),
+                              Wrap(spacing: 8, children: [
+                                if (onSpeak != null)
+                                  TextButton.icon(
+                                      icon:
+                                          const Icon(Icons.volume_up_outlined),
+                                      label: Text(l.vocabularySpeak),
+                                      onPressed: speaking
+                                          ? null
+                                          : () async {
+                                              setState(() => speaking = true);
+                                              try {
+                                                await onSpeak();
+                                              } catch (_) {
+                                                if (context.mounted) {
+                                                  setState(() => error =
+                                                      l.vocabularyActionError);
+                                                }
+                                              } finally {
+                                                if (context.mounted) {
+                                                  setState(
+                                                      () => speaking = false);
+                                                }
+                                              }
+                                            }),
+                                if (onExplain != null)
+                                  TextButton.icon(
+                                      icon: const Icon(
+                                          Icons.auto_awesome_outlined),
+                                      label: Text(l.vocabularyExplain),
+                                      onPressed: explaining
+                                          ? null
+                                          : () async {
+                                              if (source == null ||
+                                                  target == null) {
+                                                setState(() => error = l
+                                                    .vocabularyLanguageRequired);
+                                                return;
+                                              }
+                                              setState(() {
+                                                explaining = true;
+                                                error = null;
+                                              });
+                                              try {
+                                                final text = await onExplain(
+                                                    source!, target!);
+                                                if (context.mounted) {
+                                                  setState(
+                                                      () => explanation = text);
+                                                }
+                                              } catch (_) {
+                                                if (context.mounted) {
+                                                  setState(() => error =
+                                                      l.vocabularyActionError);
+                                                }
+                                              } finally {
+                                                if (context.mounted) {
+                                                  setState(
+                                                      () => explaining = false);
+                                                }
+                                              }
+                                            }),
+                              ]),
+                              if (explaining) const LinearProgressIndicator(),
+                              if (explanation != null)
+                                SelectableText(explanation!),
                               SelectableText(contextText),
                               const SizedBox(height: 8),
                               Text('${book.title} · $chapter'),

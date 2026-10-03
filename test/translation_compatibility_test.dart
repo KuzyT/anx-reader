@@ -64,6 +64,17 @@ class ControlledChatModel extends FakeChatModel {
 }
 
 void main() {
+  test('cancel also invalidates classification waiting for its quiet slot',
+      () async {
+    var started = false;
+    final classification = AiTranslateProvider.classifyInBackground(() async {
+      started = true;
+      return 'unused';
+    });
+    AiTranslateProvider.cancelTranslation();
+    await expectLater(classification, throwsStateError);
+    expect(started, isFalse);
+  });
   test('old runner cleanup never cancels a new model subscription', () async {
     final cleanup = Completer<void>();
     final oldSource =
@@ -127,7 +138,8 @@ void main() {
         provider.parseJsonArrayFromResponse(
             '```json\n[[["ola","привет"]]]\n```', 1),
         ['[["ola","привет"]]']);
-    expect(provider.parseJsonArrayFromResponse('["one"]', 2), isNull);
+    expect(provider.parseJsonArrayFromResponse('["one"]', 2),
+        ['one', '__ANX_RETRY__']);
   });
 
   test('single full AI batch preserves upstream full-text prompt selection',
